@@ -78,4 +78,18 @@ end;*/
 select val from MyTable
 order by id desc;
 
+CREATE OR REPLACE PROCEDURE DELETE_FROM_TABLE_DYNAMIC (delete_id IN NUMBER) IS
+    delete_command VARCHAR2(400);
+BEGIN
+    delete_command := 'DELETE FROM MyTable WHERE ID=:1';
+    EXECUTE IMMEDIATE delete_command USING delete_id;
+    DBMS_OUTPUT.PUT_LINE('Запись c ID=' || delete_id || ' успешно удалена');
+END DELETE_FROM_TABLE_DYNAMIC;
 
+begin
+DELETE_FROM_TABLE_DYNAMIC(40001);
+end;
+/
+
+select ID, val from MyTable
+order by id desc;
