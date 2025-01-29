@@ -34,7 +34,7 @@ END;
 
 SELECT compare_even_odd() from dual;
 
-select generate_insert_command_dynamic(1) from dual;
+select generate_insert_command_dynamic(30001) from dual;
 
 CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER)
 RETURN VARCHAR2 IS
@@ -42,14 +42,20 @@ RETURN VARCHAR2 IS
     val_to_insert NUMBER;
 BEGIN
 
-
+    BEGIN
         SELECT val INTO val_to_insert
         FROM MyTable
         WHERE id = input_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Ошибка: Строка с ID = ' || input_id || ' не найдена!');
+            val_to_insert := NULL;
+    END;
     insert_command := 'INSERT INTO MyTable(val) VALUES(' || val_to_insert || ');';
     DBMS_OUTPUT.PUT_LINE(insert_command);
     RETURN insert_command;
 END generate_insert_command_dynamic;
+
 
 
 
