@@ -6,5 +6,12 @@ CREATE TABLE MyTable(
     val NUMBER
 );*/
 
-
+/*
+BEGIN
+    FOR i IN 1..10000 LOOP
+        INSERT INTO MyTable(val) VALUES(TRUNC(DBMS_RANDOM.VALUE(1, 10000)));
+        END LOOP;
+END;
+*/
+SELECT * FROM MyTable;
 
