@@ -1,3 +1,4 @@
+
 --SELECT table_name FROM  user_tables;
 --DROP TABLE MyTable;
 /*
@@ -32,3 +33,26 @@ BEGIN
 END;
 
 SELECT compare_even_odd() from dual;
+
+select generate_insert_command_dynamic(1) from dual;
+
+CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER)
+RETURN VARCHAR2 IS
+    insert_command VARCHAR2(400);
+    val_to_insert NUMBER;
+BEGIN
+
+
+        SELECT val INTO val_to_insert
+        FROM MyTable
+        WHERE id = input_id;
+    insert_command := 'INSERT INTO MyTable(val) VALUES(' || val_to_insert || ');';
+    DBMS_OUTPUT.PUT_LINE(insert_command);
+    RETURN insert_command;
+END generate_insert_command_dynamic;
+
+
+
+
+
+
