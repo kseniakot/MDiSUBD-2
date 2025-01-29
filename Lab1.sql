@@ -93,3 +93,30 @@ end;
 
 select ID, val from MyTable
 order by id desc;
+
+
+CREATE OR REPLACE PROCEDURE UPDATE_TABLE_DYNAMIC (update_id IN NUMBER, update_val IN NUMBER) IS
+    update_command VARCHAR2(400);
+    exists_id NUMBER;
+BEGIN
+    BEGIN
+        SELECT id INTO exists_id
+        FROM MyTable
+        WHERE id = update_id;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('ID not found');
+            RETURN;
+    END;
+    update_command := 'UPDATE MyTable SET val=:1 WHERE ID=:2';
+    EXECUTE IMMEDIATE update_command USING update_val, update_id;
+    DBMS_OUTPUT.PUT_LINE('Запись c ID=' || update_id || ' успешно обновлена');
+end UPDATE_TABLE_DYNAMIC;
+/
+begin
+UPDATE_TABLE_DYNAMIC(40000, 4555);
+end;
+/
+
+select ID, val from MyTable
+order by id desc;
