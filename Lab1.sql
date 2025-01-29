@@ -34,7 +34,7 @@ END;
 
 SELECT compare_even_odd() from dual;
 
-CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER, input_val IN NUMBER DEFAULT 0)
+CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER, input_val IN NUMBER DEFAULT NULL)
 RETURN VARCHAR2 IS
     insert_command VARCHAR2(400);
     existing_id NUMBER;
@@ -61,9 +61,21 @@ END generate_insert_command_dynamic;
 
 select generate_insert_command_dynamic(1, 2025) from dual;
 
+CREATE OR REPLACE PROCEDURE INSERT_INTO_TABLE_DYNAMIC (input_value IN NUMBER) IS
+    insert_command VARCHAR2(400);
+BEGIN
+    insert_command := 'INSERT INTO MyTable(val) VALUES(:1)';
+    EXECUTE IMMEDIATE insert_command USING input_value;
 
+    DBMS_OUTPUT.PUT_LINE('Запись успешно добавлена с значением: ' || input_value);
+END INSERT_INTO_TABLE_DYNAMIC;
+/
 
-
-
+/*begin
+INSERT_INTO_TABLE_DYNAMIC(2025);
+end;*/
+/
+select val from MyTable
+order by id desc;
 
 
