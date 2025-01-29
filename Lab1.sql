@@ -34,28 +34,34 @@ END;
 
 SELECT compare_even_odd() from dual;
 
-CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER)
+CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER, input_val IN NUMBER DEFAULT 0)
 RETURN VARCHAR2 IS
     insert_command VARCHAR2(400);
-    val_to_insert NUMBER;
+    existing_id NUMBER;
+    duplicate_id EXCEPTION;
 BEGIN
 
     BEGIN
-        SELECT val INTO val_to_insert
+        SELECT id into existing_id
         FROM MyTable
         WHERE id = input_id;
+        RAISE duplicate_id;
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
-            DBMS_OUTPUT.PUT_LINE('Ошибка: Строка с ID = ' || input_id || ' не найдена!');
-            val_to_insert := NULL;
+            NULL;
+        when duplicate_id THEN
+            DBMS_OUTPUT.PUT_LINE('ID already exists');
+            RETURN 'ID already exists';
     END;
-    insert_command := 'INSERT INTO MyTable(val) VALUES(' || val_to_insert || ');';
+    insert_command := 'INSERT INTO MyTable(id, val) VALUES('||input_id||','|| input_val || ');';
     DBMS_OUTPUT.PUT_LINE(insert_command);
     RETURN insert_command;
 END generate_insert_command_dynamic;
-
 /
-select generate_insert_command_dynamic(30001) from dual;
+
+select generate_insert_command_dynamic(1, 2025) from dual;
+
+
 
 
 
