@@ -34,8 +34,6 @@ END;
 
 SELECT compare_even_odd() from dual;
 
-select generate_insert_command_dynamic(30001) from dual;
-
 CREATE OR REPLACE FUNCTION generate_insert_command_dynamic (input_id IN NUMBER)
 RETURN VARCHAR2 IS
     insert_command VARCHAR2(400);
@@ -56,7 +54,8 @@ BEGIN
     RETURN insert_command;
 END generate_insert_command_dynamic;
 
-
+/
+select generate_insert_command_dynamic(30001) from dual;
 
 
 
