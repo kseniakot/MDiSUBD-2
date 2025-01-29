@@ -114,9 +114,34 @@ BEGIN
 end UPDATE_TABLE_DYNAMIC;
 /
 begin
-UPDATE_TABLE_DYNAMIC(40000, 4555);
+UPDATE_TABLE_DYNAMIC(400000, 4555);
 end;
 /
 
 select ID, val from MyTable
 order by id desc;
+
+CREATE OR REPLACE FUNCTION TOTAL_ANNUAL_AWARD(monthly_payment IN DECIMAL, annual_premium IN NUMBER) RETURN DECIMAL IS
+    total_award DECIMAL;
+    negative_payment EXCEPTION;
+    invalid_premium EXCEPTION;
+BEGIN
+    IF monthly_payment is null OR monthly_payment < 0 THEN
+        RAISE negative_payment;
+    end if;
+    IF annual_premium IS NULL OR annual_premium < 0 OR annual_premium <> TRUNC(annual_premium) THEN
+        RAISE invalid_premium;
+    end if;
+    total_award := (1+ annual_premium/100) * monthly_payment * 12;
+    RETURN total_award;
+EXCEPTION
+    WHEN negative_payment THEN
+        DBMS_OUTPUT.PUT_LINE('Monthly payment should be a positive value');
+        RETURN -1;
+    WHEN invalid_premium THEN
+        DBMS_OUTPUT.PUT_LINE('Annual premium must be a positive integer');
+        RETURN -1;
+
+END TOTAL_ANNUAL_AWARD;
+
+SELECT TOTAL_ANNUAL_AWARD(20, 10) FROM dual;
