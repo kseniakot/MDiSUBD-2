@@ -217,6 +217,8 @@ CREATE TABLE students_logs (
     NEW_NAME VARCHAR2(255),
     OLD_GROUP_ID NUMBER,
     NEW_GROUP_ID NUMBER,
+    OLD_GROUP_NAME VARCHAR2(255),
+    NEW_GROUP_NAME VARCHAR2(255),
     ACTION_TIME TIMESTAMP
 );
 
@@ -227,14 +229,14 @@ AFTER INSERT OR UPDATE OR DELETE ON students
 FOR EACH ROW
 BEGIN
     IF INSERTING THEN
-        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, NEW_ID, NEW_NAME, NEW_GROUP_ID, ACTION_TIME)
-        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'INSERT', :NEW.student_id, :NEW.student_name, :NEW.group_id, SYSTIMESTAMP);
+        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, NEW_ID, NEW_NAME, NEW_GROUP_ID, NEW_GROUP_NAME, ACTION_TIME)
+        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'INSERT', :NEW.student_id, :NEW.student_name, :NEW.group_id, group_ctx.g_group_names(:NEW.group_id), SYSTIMESTAMP);
     ELSIF UPDATING THEN
-        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, OLD_ID, NEW_ID, OLD_NAME, NEW_NAME, OLD_GROUP_ID, NEW_GROUP_ID, ACTION_TIME)
-        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'UPDATE', :OLD.student_id, :NEW.student_id, :OLD.student_name, :NEW.student_name, :OLD.group_id, :NEW.group_id, SYSTIMESTAMP);
+        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, OLD_ID, NEW_ID, OLD_NAME, NEW_NAME, OLD_GROUP_ID, OLD_GROUP_NAME, NEW_GROUP_ID, NEW_GROUP_NAME, ACTION_TIME)
+        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'UPDATE', :OLD.student_id, :NEW.student_id, :OLD.student_name, :NEW.student_name, :OLD.group_id, group_ctx.g_group_names(:OLD.group_id), :NEW.group_id, group_ctx.g_group_names(:NEW.group_id), SYSTIMESTAMP);
     ELSIF DELETING THEN
-        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, OLD_ID, OLD_NAME, OLD_GROUP_ID, ACTION_TIME)
-        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'DELETE', :OLD.student_id, :OLD.student_name, :OLD.group_id, SYSTIMESTAMP);
+        INSERT INTO students_logs (LOG_ID, ACTION_TYPE, OLD_ID, OLD_NAME, OLD_GROUP_ID, OLD_GROUP_NAME, ACTION_TIME)
+        VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'DELETE', :OLD.student_id, :OLD.student_name, :OLD.group_id, group_ctx.g_group_names(:OLD.group_id), SYSTIMESTAMP);
     END IF;
 END;
 
