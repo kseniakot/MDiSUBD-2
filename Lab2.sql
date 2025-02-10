@@ -183,6 +183,30 @@ BEGIN
 
 END;
 
+-- MANAGE STUDENTS LOGS
+
+CREATE OR REPLACE PACKAGE group_ctx AS
+    TYPE t_group_name_table IS TABLE OF VARCHAR2(255) INDEX BY BINARY_INTEGER;
+    g_group_names t_group_name_table;
+    PROCEDURE load_group_name(p_group_id NUMBER, p_group_name VARCHAR2);
+
+END group_ctx;
+
+CREATE OR REPLACE PACKAGE BODY group_ctx AS
+
+    PROCEDURE load_group_name(p_group_id NUMBER, p_group_name VARCHAR2) IS
+    BEGIN
+        g_group_names(p_group_id) := p_group_name;
+    END load_group_name;
+
+END group_ctx;
+
+CREATE OR REPLACE TRIGGER cache_group_on_insert
+AFTER INSERT OR UPDATE ON groups
+FOR EACH ROW
+BEGIN
+    group_ctx.load_group_name(:NEW.group_id, :NEW.group_name);
+END;
 
 CREATE TABLE students_logs (
     LOG_ID NUMBER PRIMARY KEY,
