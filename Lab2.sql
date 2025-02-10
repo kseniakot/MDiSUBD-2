@@ -4,7 +4,7 @@ drop table students;
 CREATE TABLE groups (
     group_id NUMBER NOT NULL,
     group_name VARCHAR2(20) NOT NULL,
-    C_VAL NUMBER NOT NULL
+    C_VAL NUMBER DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE students (
