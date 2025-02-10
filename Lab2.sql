@@ -1,5 +1,6 @@
 drop table groups;
 drop table students;
+
 CREATE TABLE groups (
     group_id NUMBER NOT NULL,
     group_name VARCHAR2(20) NOT NULL,
@@ -14,6 +15,8 @@ CREATE TABLE students (
 
 CREATE SEQUENCE GROUP_ID_SEQ START WITH 1;
 CREATE SEQUENCE STUDENT_ID_SEQ START WITH 1;
+
+-- AUTOINCREMENT TRIGGERS
 
 CREATE OR REPLACE TRIGGER groups_id_autoincrement
 BEFORE INSERT ON groups
@@ -32,3 +35,27 @@ BEGIN
         :NEW.student_id := STUDENT_ID_SEQ.NEXTVAL;
     END IF;
 END;
+
+-- UNIQUE IDs TRIGGERS
+
+CREATE OR REPLACE TRIGGER groups_id_unique
+AFTER INSERT OR UPDATE ON groups
+DECLARE duplicate_id_count INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO duplicate_id_count
+    FROM (
+        SELECT group_id
+        FROM groups
+        GROUP BY group_id
+        HAVING COUNT(*) > 1
+    );
+
+    IF duplicate_id_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20000, 'Group ID must be unique');
+    END IF;
+
+END;
+
+
+
