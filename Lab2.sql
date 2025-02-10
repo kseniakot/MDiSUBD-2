@@ -170,11 +170,15 @@ CREATE OR REPLACE TRIGGER synchronise_c_val_on_update
 BEFORE UPDATE OF group_id ON students
 FOR EACH ROW
 BEGIN
-    UPDATE groups
-    SET c_val = c_val - 1
-    WHERE group_id = :OLD.group_id;
 
-    UPDATE groups
-    SET c_val = c_val + 1
-    WHERE group_id = :NEW.group_id;
+    IF :OLD.GROUP_ID != :NEW.GROUP_ID THEN
+        UPDATE groups
+        SET c_val = c_val - 1
+        WHERE group_id = :OLD.group_id;
+
+        UPDATE groups
+        SET c_val = c_val + 1
+        WHERE group_id = :NEW.group_id;
+    END IF;
+
 END;
