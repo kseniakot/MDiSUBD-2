@@ -213,3 +213,40 @@ BEGIN
         VALUES (STUDENTS_LOGS_SEQ.NEXTVAL, 'DELETE', :OLD.student_id, :OLD.student_name, :OLD.group_id, SYSTIMESTAMP);
     END IF;
 END;
+
+
+CREATE OR REPLACE PROCEDURE restore_students_from_logs(
+    p_time TIMESTAMP DEFAULT NULL,
+    p_offset INTERVAL DAY TO SECOND DEFAULT NULL
+) IS
+    v_restore_time TIMESTAMP;
+BEGIN
+    IF p_time IS NOT NULL THEN
+        v_restore_time := p_time;
+    ELSIF p_offset IS NOT NULL THEN
+        v_restore_time := SYSTIMESTAMP - p_offset;
+    ELSE
+        RAISE_APPLICATION_ERROR(-20000, 'Either p_time or p_offset must be provided');
+    END IF;
+
+    FOR record in (
+        SELECT *
+        FROM students_logs
+        WHERE action_time >= v_restore_time
+    ) LOOP
+        IF record.action_type = 'INSERT' THEN
+            DELETE FROM students
+            WHERE student_id = record.new_id;
+        ELSIF record.action_type = 'UPDATE' THEN
+            UPDATE students
+            SET student_id = record.old_id,
+                student_name = record.old_name,
+                group_id = record.old_group_id
+            WHERE student_id = record.new_id;
+        ELSIF record.action_type = 'DELETE' THEN
+            INSERT INTO students (student_id, student_name, group_id)
+            VALUES (record.old_id, record.old_name, record.old_group_id);
+        END IF;
+    END LOOP;
+
+END;
