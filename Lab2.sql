@@ -276,3 +276,30 @@ BEGIN
     END LOOP;
 
 END;
+
+delete from groups where group_id=111;
+delete from groups;
+select * from students;
+delete from students;
+INSERT INTO groups (group_id, group_name) VALUES (111, 'Group 111');
+INSERT INTO groups (group_id, group_name) VALUES (23, 'Group 23');
+INSERT INTO groups (group_name) VALUES ('Group 2');
+INSERT INTO groups (group_name) VALUES ('Group 3');
+select * from groups;
+
+INSERT INTO students (student_name, group_id) VALUES ('Student 111.2', 111);
+UPDATE students SET group_id = 22 WHERE student_id = 1;
+UPDATE students SET group_id = 24 WHERE GROUP_id = 21;
+SELECT * FROM STUDENTS_LOGS;
+DELETE FROM GROUPS WHERE GROUP_ID = 24;
+
+
+
+begin
+restore_students_from_logs(TO_TIMESTAMP('2025-02-10 21:40:22.872951', 'YYYY-MM-DD HH24:MI:SS.FF6'));
+end;
+
+begin
+    restore_students_from_logs(NULL, INTERVAL '2' MINUTE);
+end;
+
