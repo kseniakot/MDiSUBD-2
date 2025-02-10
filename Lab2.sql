@@ -57,7 +57,6 @@ BEGIN
 
 END;
 
-
 CREATE OR REPLACE TRIGGER students_id_unique
 AFTER INSERT OR UPDATE ON students
 DECLARE duplicate_id_count INTEGER;
@@ -73,6 +72,26 @@ BEGIN
 
     IF duplicate_id_count > 0 THEN
         RAISE_APPLICATION_ERROR(-20000, 'Student ID must be unique');
+    END IF;
+
+END;
+
+-- UNIQUE GROUP NAMES TRIGGER
+CREATE OR REPLACE TRIGGER groups_name_unique
+AFTER INSERT OR UPDATE ON groups
+DECLARE duplicate_name_count INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO duplicate_name_count
+    FROM (
+        SELECT group_name
+        FROM groups
+        GROUP BY group_name
+        HAVING COUNT(*) > 1
+    );
+
+    IF duplicate_name_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20000, 'Group name must be unique');
     END IF;
 
 END;
