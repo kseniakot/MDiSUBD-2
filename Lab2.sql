@@ -58,4 +58,22 @@ BEGIN
 END;
 
 
+CREATE OR REPLACE TRIGGER students_id_unique
+AFTER INSERT OR UPDATE ON students
+DECLARE duplicate_id_count INTEGER;
+BEGIN
+    SELECT COUNT(*)
+    INTO duplicate_id_count
+    FROM (
+        SELECT student_id
+        FROM students
+        GROUP BY student_id
+        HAVING COUNT(*) > 1
+    );
+
+    IF duplicate_id_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20000, 'Student ID must be unique');
+    END IF;
+
+END;
 
