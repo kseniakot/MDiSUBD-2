@@ -133,3 +133,35 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20000, 'This group has students. Group ID cannot be updated');
     END IF;
 END;
+
+
+CREATE OR REPLACE TRIGGER synchronise_c_val_on_insert
+BEFORE INSERT ON students
+FOR EACH ROW
+BEGIN
+    UPDATE groups
+    SET c_val = c_val + 1
+    WHERE group_id = :NEW.group_id;
+END;
+
+CREATE OR REPLACE TRIGGER synchronise_c_val_on_delete
+BEFORE DELETE ON students
+FOR EACH ROW
+BEGIN
+    UPDATE groups
+    SET c_val = c_val - 1
+    WHERE group_id = :OLD.group_id;
+END;
+
+CREATE OR REPLACE TRIGGER synchronise_c_val_on_update
+BEFORE UPDATE OF group_id ON students
+FOR EACH ROW
+BEGIN
+    UPDATE groups
+    SET c_val = c_val - 1
+    WHERE group_id = :OLD.group_id;
+
+    UPDATE groups
+    SET c_val = c_val + 1
+    WHERE group_id = :NEW.group_id;
+END;
