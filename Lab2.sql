@@ -84,9 +84,9 @@ BEGIN
     SELECT COUNT(*)
     INTO duplicate_name_count
     FROM (
-        SELECT group_name
+        SELECT LOWER(group_name)
         FROM groups
-        GROUP BY group_name
+        GROUP BY LOWER(group_name)
         HAVING COUNT(*) > 1
     );
 
