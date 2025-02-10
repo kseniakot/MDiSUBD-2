@@ -19,12 +19,16 @@ CREATE OR REPLACE TRIGGER groups_id_autoincrement
 BEFORE INSERT ON groups
     FOR EACH ROW
 BEGIN
-    :NEW.group_id := GROUP_ID_SEQ.NEXTVAL;
+    IF :NEW.group_id IS NULL THEN
+        :NEW.group_id := GROUP_ID_SEQ.NEXTVAL;
+    END IF;
 END;
 
 CREATE OR REPLACE TRIGGER students_id_autoincrement
 BEFORE INSERT ON students
     FOR EACH ROW
 BEGIN
-    :NEW.student_id := STUDENT_ID_SEQ.NEXTVAL;
+    IF NEW.student_id IS NULL THEN
+        :NEW.student_id := STUDENT_ID_SEQ.NEXTVAL;
+    END IF;
 END;
