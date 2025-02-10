@@ -31,7 +31,7 @@ CREATE OR REPLACE TRIGGER students_id_autoincrement
 BEFORE INSERT ON students
     FOR EACH ROW
 BEGIN
-    IF NEW.student_id IS NULL THEN
+    IF :NEW.student_id IS NULL THEN
         :NEW.student_id := STUDENT_ID_SEQ.NEXTVAL;
     END IF;
 END;
