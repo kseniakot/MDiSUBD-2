@@ -96,3 +96,40 @@ BEGIN
 
 END;
 
+-- FOREIGN KEY TRIGGERS
+CREATE OR REPLACE TRIGGER delete_group_cascade
+BEFORE DELETE ON groups
+FOR EACH ROW
+BEGIN
+    DELETE FROM students
+    WHERE group_id = :OLD.group_id;
+END;
+
+CREATE OR REPLACE TRIGGER check_group_exists
+BEFORE INSERT OR UPDATE ON students
+FOR EACH ROW
+DECLARE group_exists NUMBER;
+BEGIN
+    SELECT COUNT(*)
+    INTO group_exists
+    FROM groups
+    WHERE group_id = :NEW.group_id;
+
+    IF group_exists = 0 THEN
+        RAISE_APPLICATION_ERROR(-20000, 'Group with ID ' || :NEW.group_id || ' does not exist');
+    END IF;
+END;
+
+CREATE OR REPLACE TRIGGER prevent_group_id_update
+BEFORE UPDATE OF group_id ON groups
+FOR EACH ROW
+    DECLARE students_exist NUMBER;
+BEGIN
+    SELECT count(*)
+    INTO students_exist
+    FROM students
+    WHERE group_id = :OLD.group_id;
+    IF students_exist > 0 THEN
+        RAISE_APPLICATION_ERROR(-20000, 'This group has students. Group ID cannot be updated');
+    END IF;
+END;
