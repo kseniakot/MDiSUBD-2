@@ -97,12 +97,23 @@ BEGIN
 END;
 
 -- FOREIGN KEY TRIGGERS
+
+CREATE OR REPLACE PACKAGE global_variables AS
+     is_group_delete_cascade BOOLEAN := FALSE;
+END global_variables;
+
 CREATE OR REPLACE TRIGGER delete_group_cascade
 BEFORE DELETE ON groups
 FOR EACH ROW
 BEGIN
+    global_variables.is_group_delete_cascade := TRUE;
     DELETE FROM students
     WHERE group_id = :OLD.group_id;
+    global_variables.is_group_delete_cascade := FALSE;
+    EXCEPTION
+    WHEN OTHERS THEN
+        global_variables.is_group_delete_cascade := FALSE;
+        RAISE;
 END;
 
 CREATE OR REPLACE TRIGGER check_group_exists
@@ -148,9 +159,11 @@ CREATE OR REPLACE TRIGGER synchronise_c_val_on_delete
 BEFORE DELETE ON students
 FOR EACH ROW
 BEGIN
-    UPDATE groups
-    SET c_val = c_val - 1
-    WHERE group_id = :OLD.group_id;
+    IF NOT global_variables.is_group_delete_cascade THEN
+        UPDATE groups
+        SET c_val = c_val - 1
+        WHERE group_id = :OLD.group_id;
+    END IF;
 END;
 
 CREATE OR REPLACE TRIGGER synchronise_c_val_on_update
