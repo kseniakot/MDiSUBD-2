@@ -59,7 +59,7 @@ BEGIN
 END generate_insert_command_dynamic;
 /
 
-select generate_insert_command_dynamic(-5, 2025) from dual;
+select generate_insert_command_dynamic(10, 2025) from dual;
 
 CREATE OR REPLACE PROCEDURE INSERT_INTO_TABLE_DYNAMIC (input_value IN NUMBER) IS
     insert_command VARCHAR2(400);
