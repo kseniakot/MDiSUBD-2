@@ -2,7 +2,8 @@ DECLARE
     v_json CLOB := '{
         "queryType": "SELECT",
         "columns": ["id", "name", "age"],
-        "tables": ["test_table"]
+        "tables": ["test_table"],
+        "where": ["test_table.age > 26"],
     }';
     v_cursor orm_processor.ref_cursor;
     v_id NUMBER;
