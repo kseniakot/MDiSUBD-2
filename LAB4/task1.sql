@@ -7,6 +7,9 @@ CREATE OR REPLACE PACKAGE SQL_GENERATOR_PKG AS
   
   -- Helper function to handle data type conversions
   FUNCTION format_value(p_value VARCHAR2, p_data_type VARCHAR2 DEFAULT NULL) RETURN VARCHAR2;
+  
+  -- Helper function to process a single query part (for main queries and UNION parts)
+  FUNCTION process_query_part(p_query_part CLOB) RETURN VARCHAR2;
 END SQL_GENERATOR_PKG;
 /
 
@@ -170,10 +173,9 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     END IF;
   END format_value;
 
-  -- Main function to parse JSON and execute query
-  FUNCTION json_select_handler(p_json CLOB) RETURN SYS_REFCURSOR IS
+  -- Process a single query part
+  FUNCTION process_query_part(p_query_part CLOB) RETURN VARCHAR2 IS
     v_sql         VARCHAR2(4000);
-    v_cur         SYS_REFCURSOR;
     v_columns     VARCHAR2(1000);
     v_tables      VARCHAR2(1000);
     v_join_clause VARCHAR2(1000) := '';
@@ -185,18 +187,18 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     -- Extract columns
     SELECT LISTAGG(column_name, ', ') 
     INTO v_columns
-    FROM JSON_TABLE(p_json, '$.columns[*]' COLUMNS (column_name VARCHAR2(100) PATH '$'));
+    FROM JSON_TABLE(p_query_part, '$.columns[*]' COLUMNS (column_name VARCHAR2(100) PATH '$'));
 
     -- Extract tables
     SELECT LISTAGG(table_name, ', ') 
     INTO v_tables
-    FROM JSON_TABLE(p_json, '$.tables[*]' COLUMNS (table_name VARCHAR2(50) PATH '$'));
+    FROM JSON_TABLE(p_query_part, '$.tables[*]' COLUMNS (table_name VARCHAR2(50) PATH '$'));
 
     -- Process joins if present
     BEGIN
       SELECT LISTAGG(jt.join_type || ' ' || jt.join_table || ' ON ' || jt.join_condition, ' ') 
       INTO v_join_clause
-      FROM JSON_TABLE(p_json, '$.joins[*]' 
+      FROM JSON_TABLE(p_query_part, '$.joins[*]' 
              COLUMNS (
                join_type VARCHAR2(20) PATH '$.type',
                join_table VARCHAR2(50) PATH '$.table',
@@ -211,7 +213,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     BEGIN
       SELECT NVL(UPPER(jt.operator), 'AND')
       INTO v_logical_op
-      FROM JSON_TABLE(p_json, '$' COLUMNS (operator VARCHAR2(10) PATH '$.where.operator')) jt;
+      FROM JSON_TABLE(p_query_part, '$' COLUMNS (operator VARCHAR2(10) PATH '$.where.operator')) jt;
     EXCEPTION
       WHEN OTHERS THEN
         v_logical_op := 'AND';
@@ -221,7 +223,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     BEGIN
       FOR cond IN (
         SELECT *
-        FROM JSON_TABLE(p_json, '$.where.conditions[*]'
+        FROM JSON_TABLE(p_query_part, '$.where.conditions[*]'
           COLUMNS (
             condition_column     VARCHAR2(100) PATH '$.column',
             condition_operator   VARCHAR2(20)  PATH '$.operator',
@@ -236,7 +238,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
           v_where := v_where || ' ' || v_logical_op || ' ';
         END IF;
          DBMS_OUTPUT.PUT_LINE('cond.n_query: ' || cond.n_query);
-         DBMS_OUTPUT.PUT_LINE('JSON: ' || p_json);
+         DBMS_OUTPUT.PUT_LINE('JSON: ' || p_query_part);
         IF cond.n_query IS NOT NULL THEN
           -- Handle subquery conditions (IN, NOT IN, EXISTS, NOT EXISTS)
           DECLARE
@@ -281,7 +283,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     BEGIN
       SELECT LISTAGG(column_name, ', ')
       INTO v_group_by
-      FROM JSON_TABLE(p_json, '$.group_by[*]' COLUMNS (column_name VARCHAR2(100) PATH '$'));
+      FROM JSON_TABLE(p_query_part, '$.group_by[*]' COLUMNS (column_name VARCHAR2(100) PATH '$'));
     EXCEPTION
       WHEN OTHERS THEN
         v_group_by := '';
@@ -291,7 +293,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     BEGIN
       FOR cond IN (
         SELECT *
-        FROM JSON_TABLE(p_json, '$.having[*]'
+        FROM JSON_TABLE(p_query_part, '$.having[*]'
           COLUMNS (
             condition_column     VARCHAR2(100) PATH '$.column',
             condition_operator   VARCHAR2(20)  PATH '$.operator',
@@ -314,17 +316,88 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
         v_having := '';
     END;
 
-    -- Build the complete SQL statement
+    -- Build the SQL statement for this part
     v_sql := 'SELECT ' || v_columns || 
              ' FROM ' || v_tables || 
              CASE WHEN v_join_clause IS NOT NULL THEN ' ' || v_join_clause ELSE '' END || 
              v_where ||
              CASE WHEN v_group_by IS NOT NULL THEN ' GROUP BY ' || v_group_by ELSE '' END ||
              v_having;
-
-    DBMS_OUTPUT.PUT_LINE('Generated SQL: ' || v_sql); -- Debugging output
              
-    -- Execute the query and return the cursor
+    RETURN v_sql;
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Error in process_query_part: ' || SQLERRM);
+      RETURN NULL;
+  END process_query_part;
+
+  -- Main function to parse JSON and execute query
+  FUNCTION json_select_handler(p_json CLOB) RETURN SYS_REFCURSOR IS
+    v_sql         VARCHAR2(4000);
+    v_cur         SYS_REFCURSOR;
+    v_main_query  VARCHAR2(4000);
+    v_union_all   BOOLEAN := FALSE;
+  BEGIN
+    -- Check if there are UNION parts in the JSON
+    DECLARE
+      v_union_parts_json  CLOB;
+      v_union_part_sql    VARCHAR2(4000);
+      v_union_parts_count NUMBER := 0;
+    BEGIN
+      -- First, process the main query
+      v_main_query := process_query_part(p_json);
+      
+      -- Check if there are union parts
+      BEGIN
+        SELECT COUNT(*)
+        INTO v_union_parts_count
+        FROM JSON_TABLE(p_json, '$.union_parts[*]' COLUMNS (dummy VARCHAR2(1) PATH '$.dummy'));
+        DBMS_OUTPUT.PUT_LINE('v_union_parts_count: ' || v_union_parts_count);
+      EXCEPTION
+        WHEN OTHERS THEN
+          v_union_parts_count := 0;
+      END;
+      
+      -- Check if we should use UNION ALL (default is UNION)
+      BEGIN
+        SELECT UPPER(jt.union_type)
+        INTO v_union_part_sql
+        FROM JSON_TABLE(p_json, '$' COLUMNS (union_type VARCHAR2(10) PATH '$.union_type')) jt;
+        
+        IF v_union_part_sql = 'UNION ALL' THEN
+          v_union_all := TRUE;
+        END IF;
+      EXCEPTION
+        WHEN OTHERS THEN
+          v_union_all := FALSE;
+      END;
+      
+      -- Start with the main query
+      v_sql := v_main_query;
+      
+      -- Process UNION parts if they exist
+      IF v_union_parts_count > 0 THEN
+        FOR union_part IN (
+          SELECT part_json
+          FROM JSON_TABLE(p_json, '$.union_parts[*]' COLUMNS (part_json CLOB FORMAT JSON PATH '$'))
+        ) LOOP
+          -- Process this UNION part
+          v_union_part_sql := process_query_part(union_part.part_json);
+          DBMS_OUTPUT.PUT_LINE('v_union_part_sql: ' || v_union_part_sql);
+          -- Add to main SQL with appropriate UNION type
+          IF v_union_all THEN
+            v_sql := v_sql || ' UNION ALL ' || v_union_part_sql;
+          ELSE
+            v_sql := v_sql || ' UNION ' || v_union_part_sql;
+            DBMS_OUTPUT.PUT_LINE('v_sql: ' || v_sql);
+          END IF;
+        END LOOP;
+      END IF;
+    END;
+    
+    DBMS_OUTPUT.PUT_LINE('Generated SQL: ' || v_sql); -- Debugging output
+    
+    -- Execute the final query and return the cursor
     OPEN v_cur FOR v_sql;
     RETURN v_cur;
   EXCEPTION

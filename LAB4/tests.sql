@@ -366,7 +366,8 @@ DECLARE
               {
                 "column": "o.customer_id",
                 "operator": "=",
-                "value": "c.customer_id"
+                "value": "c.customer_id",
+                "value_type": "IDENTIFIER"
               },
               {
                 "column": "o.status",
@@ -416,7 +417,8 @@ DECLARE
               {
                 "column": "o.customer_id",
                 "operator": "=",
-                "value": "c.customer_id"
+                "value": "c.customer_id",
+                "value_type": "IDENTIFIER"
               },
               {
                 "column": "o.status",
@@ -445,11 +447,13 @@ BEGIN
   CLOSE v_cursor;
 END;
 /
+----------------------------
+-- TEST 10: UNION ALL
+----------------------------
 
 DECLARE
-  v_generated_sql VARCHAR2(4000);
   v_json CLOB := '{
-    "columns": ["c.name", "COUNT(o.order_id) as order_count", "SUM(o.total_amount) as total_spent"],
+    "columns": ["c.customer_id", "c.name", "o.status"],
     "tables": ["customers c"],
     "joins": [
       {
@@ -458,31 +462,56 @@ DECLARE
         "on": "c.customer_id = o.customer_id"
       }
     ],
-    "group_by": ["c.name"],
-    "having": [
+    "where": {
+      "conditions": [
+        {
+          "column": "o.status",
+          "operator": "=",
+          "value": "Processing",
+          "value_type": "VARCHAR2"
+        }
+      ]
+    },
+    "union_type": "UNION ALL",
+    "union_parts": [
       {
-        "column": "COUNT(o.order_id)",
-        "operator": ">",
-        "value": "1",
-        "value_type": "NUMBER"
+        "columns": ["c.customer_id", "c.name", "o.status"],
+        "tables": ["customers c"],
+        "joins": [
+          {
+            "type": "INNER JOIN",
+            "table": "orders o",
+            "on": "c.customer_id = o.customer_id"
+          }
+        ],
+        "where": {
+          "conditions": [
+            {
+              "column": "o.status",
+              "operator": "=",
+              "value": "Pending",
+              "value_type": "VARCHAR2"
+            }
+          ]
+        }
       }
     ]
   }';
+  
+  v_cursor SYS_REFCURSOR;
+  v_id NUMBER;
+  v_name VARCHAR2(100);
+  v_status VARCHAR2(20);
 BEGIN
-  -- Use DBMS_OUTPUT to display the generated SQL for the last test
-  DBMS_OUTPUT.PUT_LINE('');
-  DBMS_OUTPUT.PUT_LINE('Generated SQL for the GROUP BY test:');
-  
-  -- Open a cursor using the package function and capture the SQL
-  DECLARE
-    v_cursor SYS_REFCURSOR;
-    v_sql VARCHAR2(4000);
-  BEGIN
-    v_cursor := SQL_GENERATOR_PKG.json_select_handler(v_json);
-    -- We can't directly get the SQL, but in a real environment you could use DBMS_SQL.TO_CURSOR_NUMBER
-    -- and then DBMS_SQL.DESCRIBE_COLUMNS to get information about the cursor
-    CLOSE v_cursor;
-  END;
-  
+  DBMS_OUTPUT.PUT_LINE('TEST 10: UNION ALL');
+  v_cursor := SQL_GENERATOR_PKG.json_select_handler(v_json);
+
+  LOOP
+    FETCH v_cursor INTO v_id, v_name, v_status;
+    EXIT WHEN v_cursor%NOTFOUND;
+    DBMS_OUTPUT.PUT_LINE('ID: ' || v_id || ', Name: ' || v_name || ', Status: ' || v_status);
+  END LOOP;
+
+  CLOSE v_cursor;
 END;
 /
