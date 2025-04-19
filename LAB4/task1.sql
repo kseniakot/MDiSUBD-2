@@ -84,12 +84,20 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
           )
         )
       ) LOOP
+      
+
         IF v_where IS NULL THEN
           v_where := ' WHERE ';
         ELSE
           v_where := v_where || ' ' || v_logical_op || ' ';
         END IF;
-        
+       
+       BEGIN
+       
+        DBMS_OUTPUT.PUT_LINE('Processing condition: ' || cond.condition_column || ' ' || 
+                         cond.condition_operator || ' subquery? ' || 
+                         CASE WHEN cond.subquery IS NOT NULL THEN 'YES' ELSE 'NO' END);
+                         end;
         IF cond.subquery IS NOT NULL THEN
           -- Handle nested subqueries
           DECLARE
@@ -148,6 +156,8 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
           ELSE
             RETURN '0';
           END IF;
+        WHEN 'IDENTIFIER' THEN 
+          RETURN p_value;
         ELSE
           RETURN '''' || REPLACE(p_value, '''', '''''') || '''';
       END CASE;
@@ -218,20 +228,21 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
             condition_value      VARCHAR2(100) PATH '$.value',
             condition_value_type VARCHAR2(30)  PATH '$.value_type',
             condition_value2     VARCHAR2(100) PATH '$.value2',
-            subquery             CLOB          PATH '$.subquery'
+            n_query              CLOB          FORMAT JSON PATH '$.subquery'
           )
         )
       ) LOOP
         IF v_where IS NOT NULL THEN
           v_where := v_where || ' ' || v_logical_op || ' ';
         END IF;
-
-        IF cond.subquery IS NOT NULL THEN
+         DBMS_OUTPUT.PUT_LINE('cond.n_query: ' || cond.n_query);
+         DBMS_OUTPUT.PUT_LINE('JSON: ' || p_json);
+        IF cond.n_query IS NOT NULL THEN
           -- Handle subquery conditions (IN, NOT IN, EXISTS, NOT EXISTS)
           DECLARE
             v_subquery_sql VARCHAR2(4000);
           BEGIN
-            v_subquery_sql := process_subquery(cond.subquery);
+            v_subquery_sql := process_subquery(cond.n_query);
             
             -- Special case for EXISTS and NOT EXISTS which don't need a column name
             IF UPPER(cond.condition_column) IN ('EXISTS', 'NOT EXISTS') THEN
@@ -257,6 +268,8 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
       
       IF v_where IS NOT NULL THEN
         v_where := ' WHERE ' || v_where;
+        DBMS_OUTPUT.PUT_LINE('v_where: ' || v_where);
+       
       END IF;
     EXCEPTION
       WHEN OTHERS THEN

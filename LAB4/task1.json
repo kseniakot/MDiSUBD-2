@@ -1,0 +1,39 @@
+{
+  "queryType": "SELECT",
+  "columns": ["column1", "table2.column2", "COUNT(*) as count"],
+  "tables": ["table1", "table2"],
+  "joins": [
+    {
+      "type": "INNER",
+      "condition": "table1.id = table2.table1_id"
+    }
+  ],
+  "filters": [
+    {
+      "column": "table1.status",
+      "operator": "=",
+      "value": "ACTIVE"
+    },
+    {
+      "condition": "AND",
+      "column": "table2.date_created",
+      "operator": ">",
+      "value": "2023-01-01"
+    }
+  ],
+  "groupBy": ["table1.category"],
+  "having": [
+    {
+      "column": "COUNT(*)",
+      "operator": ">",
+      "numeric_value": 5
+    }
+  ],
+  "orderBy": [
+    {
+      "column": "count",
+      "direction": "DESC"
+    }
+  ],
+  "limit": 10
+}
