@@ -449,6 +449,35 @@ BEGIN
 END;
 /
 
-SELECT USER FROM DUAL;
-SELECT * FROM SESSION_PRIVS WHERE privilege LIKE '%TRIGGER%';
-SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM dual;
+select * from ddl_test_products;
+
+DECLARE
+  v_json CLOB := '{
+    "query_type": "INSERT",
+    "table": "ddl_test_products",
+    "columns": ["product_name", "price", "description", "created_date"],
+    "values": [
+      [
+        {"value": "Product 33", "type": "VARCHAR2"},
+        {"value": "10", "type": "NUMBER"},
+        {"value": "Description 1", "type": "VARCHAR2"},
+        {"value": "2023-01-01", "type": "DATE"}
+      ]
+    ]
+  }';
+  v_rows_affected NUMBER;
+BEGIN
+  DBMS_OUTPUT.PUT_LINE('TEST 1: Simple INSERT');
+  SQL_GENERATOR_PKG.execute_dml(v_json, v_rows_affected);
+  DBMS_OUTPUT.PUT_LINE('Rows affected: ' || v_rows_affected);
+  
+  -- Verify the insertion
+  FOR r IN (SELECT * FROM dml_test_orders WHERE order_id = 1001) LOOP
+    DBMS_OUTPUT.PUT_LINE('Inserted: Order ID=' || r.order_id || ', Customer=' || r.customer_id || 
+                        ', Date=' || TO_CHAR(r.order_date, 'YYYY-MM-DD') || 
+                        ', Amount=' || r.total_amount || ', Status=' || r.status);
+  END LOOP;
+END;
+/
+
+select * from ddl_test_products;
