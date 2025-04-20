@@ -1,4 +1,4 @@
-CREATE OR REPLACE PACKAGE SQL_GENERATOR_PKG AS
+CREATE OR REPLACE PACKAGE SQL_GENERATOR_PKG AUTHID CURRENT_USER AS
   -- Main function to handle JSON input and return cursor with query results
   FUNCTION json_select_handler(p_json CLOB) RETURN SYS_REFCURSOR;
   

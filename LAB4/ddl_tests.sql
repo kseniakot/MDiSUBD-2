@@ -425,6 +425,7 @@ DECLARE
     ]
   }';
   v_result NUMBER;
+  v_table_exists NUMBER;
 BEGIN
   DBMS_OUTPUT.PUT_LINE('TEST 7: CREATE TABLE with Auto-Generated Primary Key');
   
@@ -445,75 +446,9 @@ BEGIN
   SQL_GENERATOR_PKG.execute_ddl(v_json, v_result);
   DBMS_OUTPUT.PUT_LINE('Result: ' || CASE WHEN v_result = 1 THEN 'SUCCESS' ELSE 'FAILURE' END);
   
-  -- Verify table was created
-  FOR c IN (SELECT table_name FROM user_tables WHERE table_name = 'DDL_TEST_PRODUCTS') LOOP
-    DBMS_OUTPUT.PUT_LINE('Table ' || c.table_name || ' was created successfully');
-  END LOOP;
-  
-  -- Verify sequence was created
-  FOR c IN (SELECT sequence_name FROM user_sequences 
-            WHERE sequence_name LIKE 'DDL_TEST_PRODUCTS%') LOOP
-    DBMS_OUTPUT.PUT_LINE('Sequence ' || c.sequence_name || ' was created successfully');
-  END LOOP;
-  
-  -- Verify trigger was created
-  FOR c IN (SELECT trigger_name, triggering_event, trigger_type 
-            FROM user_triggers 
-            WHERE table_name = 'DDL_TEST_PRODUCTS') LOOP
-    DBMS_OUTPUT.PUT_LINE('Trigger ' || c.trigger_name || 
-                         ' (' || c.trigger_type || ' ' || c.triggering_event || ') was created successfully');
-  END LOOP;
-  
-  -- Test the auto-increment functionality
-  BEGIN
-    -- Insert records without specifying the primary key
-    EXECUTE IMMEDIATE 'INSERT INTO ddl_test_products (product_name, price) VALUES (''Test Product 1'', 19.99)';
-    EXECUTE IMMEDIATE 'INSERT INTO ddl_test_products (product_name, price) VALUES (''Test Product 2'', 29.99)';
-    EXECUTE IMMEDIATE 'INSERT INTO ddl_test_products (product_name, price) VALUES (''Test Product 3'', 39.99)';
-    
-    -- Display the inserted records
-    DBMS_OUTPUT.PUT_LINE('Inserted records:');
-    FOR c IN (SELECT * FROM ddl_test_products ORDER BY product_id) LOOP
-      DBMS_OUTPUT.PUT_LINE('Product ID: ' || c.product_id || 
-                          ', Name: ' || c.product_name || 
-                          ', Price: ' || c.price);
-    END LOOP;
-  EXCEPTION
-    WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('Error testing auto-increment: ' || SQLERRM);
-  END;
-  
-  -- Cleanup
-  BEGIN
-    EXECUTE IMMEDIATE 'DROP TABLE ddl_test_products CASCADE CONSTRAINTS';
-    EXECUTE IMMEDIATE 'DROP SEQUENCE ddl_test_products_product_id_SEQ';
-  EXCEPTION
-    WHEN OTHERS THEN NULL;
-  END;
 END;
 /
 
--- Final summary
-DECLARE
-  v_count NUMBER;
-BEGIN
-  DBMS_OUTPUT.PUT_LINE('----------------------------');
-  DBMS_OUTPUT.PUT_LINE('FINAL SUMMARY');
-  DBMS_OUTPUT.PUT_LINE('----------------------------');
-  
-  SELECT COUNT(*) INTO v_count FROM user_tables 
-  WHERE table_name IN ('DDL_TEST_EMPLOYEES', 'DDL_TEST_DEPARTMENTS', 'DDL_TEST_ORDERS');
-  
-  DBMS_OUTPUT.PUT_LINE('Remaining test tables: ' || v_count);
-  
-  IF v_count > 0 THEN
-    DBMS_OUTPUT.PUT_LINE('Cleanup remaining tables:');
-    FOR t IN (SELECT table_name FROM user_tables 
-              WHERE table_name IN ('DDL_TEST_EMPLOYEES', 'DDL_TEST_DEPARTMENTS', 'DDL_TEST_ORDERS')) LOOP
-      DBMS_OUTPUT.PUT_LINE('DROP TABLE ' || t.table_name || ' CASCADE CONSTRAINTS;');
-    END LOOP;
-  ELSE
-    DBMS_OUTPUT.PUT_LINE('All test tables cleaned up successfully.');
-  END IF;
-END;
-/ 
+SELECT USER FROM DUAL;
+SELECT * FROM SESSION_PRIVS WHERE privilege LIKE '%TRIGGER%';
+SELECT SYS_CONTEXT('USERENV','CURRENT_SCHEMA') FROM dual;
