@@ -156,7 +156,32 @@ END;
 -- TEST 3: Adding a Foreign Key Constraint
 ----------------------------
 DECLARE
-  v_json CLOB := '{
+  v_dept_json CLOB := '{
+    "query_type": "CREATE_TABLE",
+    "table": "ddl_test_departments",
+    "columns": [
+      {
+        "name": "department_id",
+        "type": "NUMBER(4)",
+        "constraints": ["PRIMARY KEY"]
+      },
+      {
+        "name": "department_name",
+        "type": "VARCHAR2(100)",
+        "constraints": ["NOT NULL"]
+      },
+      {
+        "name": "location_id",
+        "type": "NUMBER(4)"
+      },
+      {
+        "name": "manager_id",
+        "type": "NUMBER(6)"
+      }
+    ]
+  }';
+  
+  v_emp_json CLOB := '{
     "query_type": "CREATE_TABLE",
     "table": "ddl_test_employees",
     "columns": [
@@ -194,32 +219,51 @@ DECLARE
   }';
   v_result NUMBER;
 BEGIN
-  -- Drop the existing employees table first
+  -- First, clean up any existing tables
   BEGIN
     EXECUTE IMMEDIATE 'DROP TABLE ddl_test_employees CASCADE CONSTRAINTS';
   EXCEPTION
     WHEN OTHERS THEN NULL;
   END;
   
-  DBMS_OUTPUT.PUT_LINE('TEST 3: Adding a Foreign Key Constraint');
-  SQL_GENERATOR_PKG.execute_ddl(v_json, v_result);
-  DBMS_OUTPUT.PUT_LINE('Result: ' || CASE WHEN v_result = 1 THEN 'SUCCESS' ELSE 'FAILURE' END);
+  BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE ddl_test_departments CASCADE CONSTRAINTS';
+  EXCEPTION
+    WHEN OTHERS THEN NULL;
+  END;
   
-  -- Verify foreign key constraints
-  FOR c IN (SELECT a.constraint_name, a.constraint_type, a.table_name,
-                  b.column_name,
-                  c.table_name as r_table_name, 
-                  d.column_name as r_column_name
-           FROM user_constraints a
-           JOIN user_cons_columns b ON a.constraint_name = b.constraint_name
-           JOIN user_constraints c ON a.r_constraint_name = c.constraint_name
-           JOIN user_cons_columns d ON c.constraint_name = d.constraint_name
-           WHERE a.constraint_type = 'R'
-           AND a.table_name = 'DDL_TEST_EMPLOYEES') LOOP
-    DBMS_OUTPUT.PUT_LINE('Foreign Key: ' || c.constraint_name || 
-                        ', Column: ' || c.column_name ||
-                        ', References: ' || c.r_table_name || '.' || c.r_column_name);
-  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('TEST 3: Adding a Foreign Key Constraint');
+  
+  -- First, create the departments table (parent table for the FK)
+  DBMS_OUTPUT.PUT_LINE('Creating parent table ddl_test_departments first...');
+  SQL_GENERATOR_PKG.execute_ddl(v_dept_json, v_result);
+  
+  IF v_result = 1 THEN
+    DBMS_OUTPUT.PUT_LINE('Parent table created successfully');
+    
+    -- Now create the employees table with the foreign key
+    DBMS_OUTPUT.PUT_LINE('Creating child table ddl_test_employees with foreign key...');
+    SQL_GENERATOR_PKG.execute_ddl(v_emp_json, v_result);
+    DBMS_OUTPUT.PUT_LINE('Result: ' || CASE WHEN v_result = 1 THEN 'SUCCESS' ELSE 'FAILURE' END);
+    
+    -- Verify foreign key constraints
+    FOR c IN (SELECT a.constraint_name, a.constraint_type, a.table_name,
+                    b.column_name,
+                    c.table_name as r_table_name, 
+                    d.column_name as r_column_name
+             FROM user_constraints a
+             JOIN user_cons_columns b ON a.constraint_name = b.constraint_name
+             JOIN user_constraints c ON a.r_constraint_name = c.constraint_name
+             JOIN user_cons_columns d ON c.constraint_name = d.constraint_name
+             WHERE a.constraint_type = 'R'
+             AND a.table_name = 'DDL_TEST_EMPLOYEES') LOOP
+      DBMS_OUTPUT.PUT_LINE('Foreign Key: ' || c.constraint_name || 
+                          ', Column: ' || c.column_name ||
+                          ', References: ' || c.r_table_name || '.' || c.r_column_name);
+    END LOOP;
+  ELSE
+    DBMS_OUTPUT.PUT_LINE('Failed to create parent table - cannot proceed with foreign key test');
+  END IF;
 END;
 /
 

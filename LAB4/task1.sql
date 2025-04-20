@@ -699,6 +699,7 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     v_auto_pk       NUMBER(1) := 0; -- Flag to indicate if we should generate a sequence/trigger
     v_pk_data_type  VARCHAR2(100) := NULL; -- Store PK column data type
     v_column_count  NUMBER := 0; -- Count of columns processed
+    v_fk_constraints CLOB := NULL; -- Store foreign key constraints to execute separately
   BEGIN
     -- Extract target table name
     SELECT jt.table_name
@@ -788,25 +789,14 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
           )
         )
       ) LOOP
-        DECLARE
-          v_column_list VARCHAR2(1000) := '';
-          v_ref_column_list VARCHAR2(1000) := '';
-        BEGIN
-          -- Add comma if needed
-          IF v_constraints IS NOT NULL AND v_constraints != '' THEN
-            v_constraints := v_constraints || ', ';
-          END IF;
-          
-          -- Build the constraint definition
-          IF tconst.const_name IS NOT NULL THEN
-            v_constraints := v_constraints || 'CONSTRAINT ' || tconst.const_name || ' ';
-          END IF;
-          
-          -- Handle different constraint types
-          IF UPPER(tconst.const_type) = 'CHECK' THEN
-            -- Handle CHECK constraints
-            v_constraints := v_constraints || 'CHECK (' || tconst.check_condition || ')';
-          ELSIF UPPER(tconst.const_type) = 'FOREIGN KEY' THEN
+        -- Special handling for foreign keys - we'll add them after table creation 
+        -- to avoid issues with referenced tables not existing yet
+        IF UPPER(tconst.const_type) = 'FOREIGN KEY' THEN
+          DECLARE
+            v_column_list VARCHAR2(1000) := '';
+            v_ref_column_list VARCHAR2(1000) := '';
+            v_fk_sql VARCHAR2(4000);
+          BEGIN
             -- Build the column list for the foreign key
             FOR col IN (
               SELECT column_name
@@ -833,47 +823,72 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
               v_ref_column_list := v_ref_column_list || col.column_name;
             END LOOP;
             
-            -- Create the FOREIGN KEY constraint
-            v_constraints := v_constraints || 'FOREIGN KEY (' || v_column_list || 
-                             ') REFERENCES ' || tconst.ref_table || '(' || v_ref_column_list || ')';
-          ELSE
-            -- Handle PRIMARY KEY and UNIQUE constraints
-            -- Build the comma-separated list of columns
-            FOR col IN (
-              SELECT column_name
-              FROM JSON_TABLE(tconst.const_columns, '$[*]' COLUMNS (
-                column_name VARCHAR2(100) PATH '$'
-              ))
-            ) LOOP
-              IF v_column_list IS NOT NULL AND v_column_list != '' THEN
-                v_column_list := v_column_list || ', ';
-              END IF;
-              v_column_list := v_column_list || col.column_name;
-            END LOOP;
-            
-            v_constraints := v_constraints || tconst.const_type || ' (' || v_column_list || ')';
-            
-            -- If this is a PRIMARY KEY constraint and we have only one column, store it for later
-            IF UPPER(tconst.const_type) = 'PRIMARY KEY' AND 
-               INSTR(v_column_list, ',') = 0 AND v_pk_column IS NULL THEN
-              v_pk_column := TRIM(v_column_list);
-              
-              -- Try to determine the data type of the PK column
-              FOR col IN (
-                SELECT col_name, col_type
-                FROM JSON_TABLE(p_json, '$.columns[*]'
-                  COLUMNS (
-                    col_name VARCHAR2(100) PATH '$.name',
-                    col_type VARCHAR2(100) PATH '$.type'
-                  )
-                )
-                WHERE col_name = TRIM(v_column_list)
-              ) LOOP
-                v_pk_data_type := col.col_type;
-              END LOOP;
+            -- Build the ALTER TABLE ADD CONSTRAINT command for the foreign key
+            v_fk_sql := 'ALTER TABLE ' || v_table_name || 
+                        ' ADD CONSTRAINT ' || tconst.const_name || 
+                        ' FOREIGN KEY (' || v_column_list || ')' || 
+                        ' REFERENCES ' || tconst.ref_table || '(' || v_ref_column_list || ')';
+                        
+            -- Add this foreign key command to our list to execute after table creation
+            v_fk_constraints := v_fk_constraints || v_fk_sql || ';';
+          END;
+        ELSE
+          DECLARE
+            v_column_list VARCHAR2(1000) := '';
+          BEGIN
+            -- Add comma if needed
+            IF v_constraints IS NOT NULL AND v_constraints != '' THEN
+              v_constraints := v_constraints || ', ';
             END IF;
-          END IF;
-        END;
+            
+            -- Build the constraint definition
+            IF tconst.const_name IS NOT NULL THEN
+              v_constraints := v_constraints || 'CONSTRAINT ' || tconst.const_name || ' ';
+            END IF;
+            
+            -- Handle different constraint types
+            IF UPPER(tconst.const_type) = 'CHECK' THEN
+              -- Handle CHECK constraints
+              v_constraints := v_constraints || 'CHECK (' || tconst.check_condition || ')';
+            ELSE
+              -- Handle PRIMARY KEY and UNIQUE constraints
+              -- Build the comma-separated list of columns
+              FOR col IN (
+                SELECT column_name
+                FROM JSON_TABLE(tconst.const_columns, '$[*]' COLUMNS (
+                  column_name VARCHAR2(100) PATH '$'
+                ))
+              ) LOOP
+                IF v_column_list IS NOT NULL AND v_column_list != '' THEN
+                  v_column_list := v_column_list || ', ';
+                END IF;
+                v_column_list := v_column_list || col.column_name;
+              END LOOP;
+              
+              v_constraints := v_constraints || tconst.const_type || ' (' || v_column_list || ')';
+              
+              -- If this is a PRIMARY KEY constraint and we have only one column, store it for later
+              IF UPPER(tconst.const_type) = 'PRIMARY KEY' AND 
+                INSTR(v_column_list, ',') = 0 AND v_pk_column IS NULL THEN
+                v_pk_column := TRIM(v_column_list);
+                
+                -- Try to determine the data type of the PK column
+                FOR col IN (
+                  SELECT col_name, col_type
+                  FROM JSON_TABLE(p_json, '$.columns[*]'
+                    COLUMNS (
+                      col_name VARCHAR2(100) PATH '$.name',
+                      col_type VARCHAR2(100) PATH '$.type'
+                    )
+                  )
+                  WHERE col_name = TRIM(v_column_list)
+                ) LOOP
+                  v_pk_data_type := col.col_type;
+                END LOOP;
+              END IF;
+            END IF;
+          END;
+        END IF;
       END LOOP;
       
       -- Add constraints to column definitions if any
@@ -912,6 +927,44 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
     
     -- Execute the CREATE TABLE statement
     EXECUTE IMMEDIATE v_sql;
+    
+    -- Now execute any foreign key constraints
+    IF v_fk_constraints IS NOT NULL THEN
+      DECLARE
+        v_start_pos  PLS_INTEGER := 1;
+        v_end_pos    PLS_INTEGER;
+        v_current_stmt VARCHAR2(4000);
+      BEGIN
+        -- Manually parse the semicolon-separated statements to avoid CONNECT BY issues
+        LOOP
+          -- Find the next semicolon
+          v_end_pos := INSTR(v_fk_constraints, ';', v_start_pos);
+          
+          -- Exit if no more semicolons found
+          EXIT WHEN v_end_pos = 0;
+          
+          -- Extract the current statement
+          v_current_stmt := TRIM(SUBSTR(v_fk_constraints, v_start_pos, v_end_pos - v_start_pos));
+          
+          -- Process the current statement
+          IF v_current_stmt IS NOT NULL AND LENGTH(v_current_stmt) > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('Executing foreign key constraint: ' || v_current_stmt);
+            
+            BEGIN
+              EXECUTE IMMEDIATE v_current_stmt;
+              DBMS_OUTPUT.PUT_LINE('Foreign key constraint added successfully');
+            EXCEPTION
+              WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Error adding foreign key constraint: ' || SQLERRM);
+                -- Don't fail the whole operation if a single FK fails
+            END;
+          END IF;
+          
+          -- Move to the position after the semicolon
+          v_start_pos := v_end_pos + 1;
+        END LOOP;
+      END;
+    END IF;
     
     -- If auto PK is enabled and we have a PK column, create a sequence and trigger
     IF v_auto_pk = 1 AND v_pk_column IS NOT NULL THEN
