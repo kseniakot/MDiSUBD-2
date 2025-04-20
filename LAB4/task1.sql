@@ -16,9 +16,14 @@ CREATE OR REPLACE PACKAGE SQL_GENERATOR_PKG AS
   FUNCTION json_update_handler(p_json CLOB) RETURN NUMBER;
   FUNCTION json_delete_handler(p_json CLOB) RETURN NUMBER;
   
+  -- Functions for DDL operations
+  FUNCTION json_create_table_handler(p_json CLOB) RETURN NUMBER;
+  FUNCTION json_drop_table_handler(p_json CLOB) RETURN NUMBER;
+  
   -- Main entry point for any SQL operation (DQL or DML)
   FUNCTION execute_sql(p_json CLOB) RETURN SYS_REFCURSOR;
   PROCEDURE execute_dml(p_json CLOB, p_rows_affected OUT NUMBER);
+  PROCEDURE execute_ddl(p_json CLOB, p_result OUT NUMBER);
 END SQL_GENERATOR_PKG;
 /
 
@@ -683,6 +688,345 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
       RAISE_APPLICATION_ERROR(-20006, 'Error executing DELETE: ' || SQLERRM || '. SQL: ' || v_sql);
   END json_delete_handler;
   
+  -- Function to handle CREATE TABLE DDL operation
+  FUNCTION json_create_table_handler(p_json CLOB) RETURN NUMBER IS
+    v_sql           VARCHAR2(4000);
+    v_table_name    VARCHAR2(100);
+    v_column_defs   VARCHAR2(4000) := '';
+    v_constraints   VARCHAR2(4000) := '';
+    v_success       NUMBER := 1; -- 1 = success, 0 = failure
+    v_pk_column     VARCHAR2(100) := NULL; -- Store primary key column name
+    v_auto_pk       NUMBER(1) := 0; -- Flag to indicate if we should generate a sequence/trigger
+    v_pk_data_type  VARCHAR2(100) := NULL; -- Store PK column data type
+    v_column_count  NUMBER := 0; -- Count of columns processed
+  BEGIN
+    -- Extract target table name
+    SELECT jt.table_name
+    INTO v_table_name
+    FROM JSON_TABLE(p_json, '$' COLUMNS (table_name VARCHAR2(100) PATH '$.table')) jt;
+    
+    -- Check if auto PK is enabled
+    BEGIN
+      SELECT CASE WHEN UPPER(jt.auto_primary_key) IN ('TRUE', 'YES', 'Y', '1') THEN 1 ELSE 0 END
+      INTO v_auto_pk
+      FROM JSON_TABLE(p_json, '$' COLUMNS (auto_primary_key VARCHAR2(10) PATH '$.auto_primary_key')) jt;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_auto_pk := 0;
+    END;
+    
+    -- Process column definitions
+    FOR col IN (
+      SELECT *
+      FROM JSON_TABLE(p_json, '$.columns[*]'
+        COLUMNS (
+          col_name      VARCHAR2(100) PATH '$.name',
+          col_type      VARCHAR2(100) PATH '$.type',
+          col_default   VARCHAR2(200) PATH '$.default',
+          constraints   VARCHAR2(1000) FORMAT JSON PATH '$.constraints'
+        )
+      )
+    ) LOOP
+      v_column_count := v_column_count + 1;
+      
+      -- Add comma and space if needed
+      IF v_column_count > 1 THEN
+        v_column_defs := v_column_defs || ', ';
+      END IF;
+  
+      -- Start new column definition with proper spacing
+      v_column_defs := v_column_defs || col.col_name || ' ' || col.col_type;
+              
+      -- Add column constraints if any
+      DECLARE
+        v_col_constraints VARCHAR2(1000) := '';
+        v_is_pk NUMBER(1) := 0;
+      BEGIN
+        FOR const IN (
+          SELECT *
+          FROM JSON_TABLE(col.constraints, '$[*]' COLUMNS (
+            constraint_text VARCHAR2(100) PATH '$'
+          ))
+        ) LOOP
+          v_col_constraints := v_col_constraints || ' ' || const.constraint_text;
+          
+          -- Check if this column is a primary key
+          IF UPPER(const.constraint_text) = 'PRIMARY KEY' THEN
+            v_pk_column := col.col_name;
+            v_pk_data_type := col.col_type;
+            v_is_pk := 1;
+          END IF;
+        END LOOP;
+        
+        -- Add column constraints to the definition
+        IF v_col_constraints IS NOT NULL THEN
+          v_column_defs := v_column_defs || v_col_constraints;
+        END IF;
+      EXCEPTION
+        WHEN OTHERS THEN
+          NULL; -- No constraints for this column
+      END;
+      
+      -- Add default value if specified
+      IF col.col_default IS NOT NULL THEN
+        v_column_defs := v_column_defs || ' DEFAULT ' || col.col_default;
+      END IF;
+    END LOOP;
+    
+    -- Process table-level constraints if any
+    BEGIN
+      FOR tconst IN (
+        SELECT *
+        FROM JSON_TABLE(p_json, '$.constraints[*]'
+          COLUMNS (
+            const_type    VARCHAR2(30) PATH '$.type',
+            const_name    VARCHAR2(100) PATH '$.name',
+            const_columns VARCHAR2(1000) FORMAT JSON PATH '$.columns',
+            check_condition VARCHAR2(1000) PATH '$.check_condition',
+            ref_table     VARCHAR2(100) PATH '$.references.table',
+            ref_columns   VARCHAR2(1000) FORMAT JSON PATH '$.references.columns'
+          )
+        )
+      ) LOOP
+        DECLARE
+          v_column_list VARCHAR2(1000) := '';
+          v_ref_column_list VARCHAR2(1000) := '';
+        BEGIN
+          -- Add comma if needed
+          IF v_constraints IS NOT NULL AND v_constraints != '' THEN
+            v_constraints := v_constraints || ', ';
+          END IF;
+          
+          -- Build the constraint definition
+          IF tconst.const_name IS NOT NULL THEN
+            v_constraints := v_constraints || 'CONSTRAINT ' || tconst.const_name || ' ';
+          END IF;
+          
+          -- Handle different constraint types
+          IF UPPER(tconst.const_type) = 'CHECK' THEN
+            -- Handle CHECK constraints
+            v_constraints := v_constraints || 'CHECK (' || tconst.check_condition || ')';
+          ELSIF UPPER(tconst.const_type) = 'FOREIGN KEY' THEN
+            -- Build the column list for the foreign key
+            FOR col IN (
+              SELECT column_name
+              FROM JSON_TABLE(tconst.const_columns, '$[*]' COLUMNS (
+                column_name VARCHAR2(100) PATH '$'
+              ))
+            ) LOOP
+              IF v_column_list IS NOT NULL AND v_column_list != '' THEN
+                v_column_list := v_column_list || ', ';
+              END IF;
+              v_column_list := v_column_list || col.column_name;
+            END LOOP;
+            
+            -- Build the referenced column list
+            FOR col IN (
+              SELECT column_name
+              FROM JSON_TABLE(tconst.ref_columns, '$[*]' COLUMNS (
+                column_name VARCHAR2(100) PATH '$'
+              ))
+            ) LOOP
+              IF v_ref_column_list IS NOT NULL AND v_ref_column_list != '' THEN
+                v_ref_column_list := v_ref_column_list || ', ';
+              END IF;
+              v_ref_column_list := v_ref_column_list || col.column_name;
+            END LOOP;
+            
+            -- Create the FOREIGN KEY constraint
+            v_constraints := v_constraints || 'FOREIGN KEY (' || v_column_list || 
+                             ') REFERENCES ' || tconst.ref_table || '(' || v_ref_column_list || ')';
+          ELSE
+            -- Handle PRIMARY KEY and UNIQUE constraints
+            -- Build the comma-separated list of columns
+            FOR col IN (
+              SELECT column_name
+              FROM JSON_TABLE(tconst.const_columns, '$[*]' COLUMNS (
+                column_name VARCHAR2(100) PATH '$'
+              ))
+            ) LOOP
+              IF v_column_list IS NOT NULL AND v_column_list != '' THEN
+                v_column_list := v_column_list || ', ';
+              END IF;
+              v_column_list := v_column_list || col.column_name;
+            END LOOP;
+            
+            v_constraints := v_constraints || tconst.const_type || ' (' || v_column_list || ')';
+            
+            -- If this is a PRIMARY KEY constraint and we have only one column, store it for later
+            IF UPPER(tconst.const_type) = 'PRIMARY KEY' AND 
+               INSTR(v_column_list, ',') = 0 AND v_pk_column IS NULL THEN
+              v_pk_column := TRIM(v_column_list);
+              
+              -- Try to determine the data type of the PK column
+              FOR col IN (
+                SELECT col_name, col_type
+                FROM JSON_TABLE(p_json, '$.columns[*]'
+                  COLUMNS (
+                    col_name VARCHAR2(100) PATH '$.name',
+                    col_type VARCHAR2(100) PATH '$.type'
+                  )
+                )
+                WHERE col_name = TRIM(v_column_list)
+              ) LOOP
+                v_pk_data_type := col.col_type;
+              END LOOP;
+            END IF;
+          END IF;
+        END;
+      END LOOP;
+      
+      -- Add constraints to column definitions if any
+      IF v_constraints IS NOT NULL AND v_constraints != '' THEN
+        IF v_column_defs IS NOT NULL AND v_column_defs != '' THEN
+          v_column_defs := v_column_defs || ', ' || v_constraints;
+        ELSE
+          v_column_defs := v_constraints;
+        END IF;
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error processing table constraints: ' || SQLERRM);
+    END;
+    
+    -- Build the CREATE TABLE statement - use TRIM to ensure clean output
+    v_sql := 'CREATE TABLE ' || v_table_name || ' (' || TRIM(v_column_defs) || ')';
+    
+    -- Add storage parameters if specified
+    DECLARE
+      v_tablespace VARCHAR2(100);
+    BEGIN
+      SELECT jt.tablespace
+      INTO v_tablespace
+      FROM JSON_TABLE(p_json, '$' COLUMNS (tablespace VARCHAR2(100) PATH '$.tablespace')) jt;
+      
+      IF v_tablespace IS NOT NULL THEN
+        v_sql := v_sql || ' TABLESPACE ' || v_tablespace;
+      END IF;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL; -- No tablespace specified
+    END;
+    
+    DBMS_OUTPUT.PUT_LINE('Generated CREATE TABLE SQL: ' || v_sql);
+    
+    -- Execute the CREATE TABLE statement
+    EXECUTE IMMEDIATE v_sql;
+    
+    -- If auto PK is enabled and we have a PK column, create a sequence and trigger
+    IF v_auto_pk = 1 AND v_pk_column IS NOT NULL THEN
+      -- Create sequence for the primary key
+      DECLARE
+        v_seq_name VARCHAR2(128) := SUBSTR(v_table_name || '_' || v_pk_column || '_SEQ', 1, 128);
+        v_seq_sql VARCHAR2(1000);
+      BEGIN
+        -- Create sequence for auto incrementing
+        v_seq_sql := 'CREATE SEQUENCE ' || v_seq_name || 
+                     ' START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE';
+        DBMS_OUTPUT.PUT_LINE('Generated SEQUENCE SQL: ' || v_seq_sql);
+        
+        BEGIN
+          EXECUTE IMMEDIATE v_seq_sql;
+        EXCEPTION
+          WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Error creating sequence: ' || SQLERRM);
+            -- Continue execution - don't fail if sequence creation fails
+        END;
+        
+        -- Create trigger for auto PK
+        DECLARE
+          v_trigger_name VARCHAR2(128) := SUBSTR(v_table_name || '_' || v_pk_column || '_TRG', 1, 128);
+          v_trigger_sql VARCHAR2(2000);
+        BEGIN
+          v_trigger_sql := 'CREATE OR REPLACE TRIGGER ' || v_trigger_name || ' 
+                           BEFORE INSERT ON ' || v_table_name || ' 
+                           FOR EACH ROW 
+                           BEGIN 
+                               IF :NEW.' || v_pk_column || ' IS NULL THEN 
+                                   SELECT ' || v_seq_name || '.NEXTVAL 
+                                   INTO :NEW.' || v_pk_column || ' 
+                                   FROM DUAL; 
+                               END IF; 
+                           END;';
+          
+          DBMS_OUTPUT.PUT_LINE('Generated TRIGGER SQL: ' || v_trigger_sql);
+          
+          BEGIN
+            EXECUTE IMMEDIATE v_trigger_sql;
+          EXCEPTION
+            WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error creating trigger: ' || SQLERRM);
+              -- Continue execution - don't fail if trigger creation fails
+          END;
+        END;
+      END;
+    END IF;
+    
+    RETURN v_success;
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Error executing CREATE TABLE: ' || SQLERRM);
+      RETURN 0; -- Failure
+  END json_create_table_handler;
+
+  -- Function to handle DROP TABLE DDL operation
+  FUNCTION json_drop_table_handler(p_json CLOB) RETURN NUMBER IS
+    v_sql              VARCHAR2(4000);
+    v_table_name       VARCHAR2(100);
+    v_cascade_constraints NUMBER(1) := 0; -- 0 = false, 1 = true
+    v_purge           NUMBER(1) := 0; -- 0 = false, 1 = true
+    v_success         NUMBER := 1; -- 1 = success, 0 = failure
+  BEGIN
+    -- Extract target table name
+    SELECT jt.table_name
+    INTO v_table_name
+    FROM JSON_TABLE(p_json, '$' COLUMNS (table_name VARCHAR2(100) PATH '$.table')) jt;
+    
+    -- Check if CASCADE CONSTRAINTS is specified
+    BEGIN
+      SELECT CASE WHEN UPPER(jt.cascade_constraints) IN ('TRUE', 'YES', 'Y', '1') THEN 1 ELSE 0 END
+      INTO v_cascade_constraints
+      FROM JSON_TABLE(p_json, '$' COLUMNS (cascade_constraints VARCHAR2(10) PATH '$.cascade_constraints')) jt;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_cascade_constraints := 0;
+    END;
+    
+    -- Check if PURGE is specified
+    BEGIN
+      SELECT CASE WHEN UPPER(jt.purge) IN ('TRUE', 'YES', 'Y', '1') THEN 1 ELSE 0 END
+      INTO v_purge
+      FROM JSON_TABLE(p_json, '$' COLUMNS (purge VARCHAR2(10) PATH '$.purge')) jt;
+    EXCEPTION
+      WHEN OTHERS THEN
+        v_purge := 0;
+    END;
+    
+    -- Build the DROP TABLE statement
+    v_sql := 'DROP TABLE ' || v_table_name;
+    
+    -- Add CASCADE CONSTRAINTS if specified
+    IF v_cascade_constraints = 1 THEN
+      v_sql := v_sql || ' CASCADE CONSTRAINTS';
+    END IF;
+    
+    -- Add PURGE if specified
+    IF v_purge = 1 THEN
+      v_sql := v_sql || ' PURGE';
+    END IF;
+    
+    DBMS_OUTPUT.PUT_LINE('Generated DROP TABLE SQL: ' || v_sql);
+    
+    -- Execute the DROP TABLE statement
+    EXECUTE IMMEDIATE v_sql;
+    
+    RETURN v_success;
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Error executing DROP TABLE: ' || SQLERRM);
+      RETURN 0; -- Failure
+  END json_drop_table_handler;
+  
   -- Main entry point for SELECT queries
   FUNCTION execute_sql(p_json CLOB) RETURN SYS_REFCURSOR IS
     v_query_type VARCHAR2(20);
@@ -709,7 +1053,31 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
       RAISE_APPLICATION_ERROR(-20008, 'Error in execute_sql: ' || SQLERRM);
   END execute_sql;
   
-  -- Main entry point for DML operations
+  -- Main entry point for DDL operations
+  PROCEDURE execute_ddl(p_json CLOB, p_result OUT NUMBER) IS
+    v_query_type VARCHAR2(20);
+  BEGIN
+    -- Determine the query type
+    SELECT UPPER(jt.query_type)
+    INTO v_query_type
+    FROM JSON_TABLE(p_json, '$' COLUMNS (query_type VARCHAR2(20) PATH '$.query_type')) jt;
+    
+    -- Execute the appropriate handler
+    CASE v_query_type
+      WHEN 'CREATE_TABLE' THEN
+        p_result := json_create_table_handler(p_json);
+      WHEN 'DROP_TABLE' THEN
+        p_result := json_drop_table_handler(p_json);
+      ELSE
+        RAISE_APPLICATION_ERROR(-20011, 'Unsupported DDL query type: ' || v_query_type);
+    END CASE;
+  EXCEPTION
+    WHEN OTHERS THEN
+      p_result := 0; -- Failure
+      RAISE_APPLICATION_ERROR(-20012, 'Error in execute_ddl: ' || SQLERRM);
+  END execute_ddl;
+  
+  -- Update the existing execute_dml procedure to support DDL operations
   PROCEDURE execute_dml(p_json CLOB, p_rows_affected OUT NUMBER) IS
     v_query_type VARCHAR2(20);
   BEGIN
@@ -726,6 +1094,10 @@ CREATE OR REPLACE PACKAGE BODY SQL_GENERATOR_PKG AS
         p_rows_affected := json_update_handler(p_json);
       WHEN 'DELETE' THEN
         p_rows_affected := json_delete_handler(p_json);
+      WHEN 'CREATE_TABLE' THEN
+        p_rows_affected := json_create_table_handler(p_json);
+      WHEN 'DROP_TABLE' THEN
+        p_rows_affected := json_drop_table_handler(p_json);
       ELSE
         RAISE_APPLICATION_ERROR(-20009, 'Unsupported query type: ' || v_query_type);
     END CASE;
