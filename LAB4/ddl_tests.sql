@@ -450,6 +450,7 @@ END;
 /
 
 select * from ddl_test_products;
+drop table ddl_test_products;
 
 DECLARE
   v_json CLOB := '{

@@ -97,6 +97,9 @@ END;
 ----------------------------
 -- TEST 2: JOIN operation
 ----------------------------
+
+SELECT * FROM orders;
+
 DECLARE
   v_json CLOB := '{
     "columns": ["c.name", "o.order_id", "o.order_date", "o.total_amount"],
@@ -109,10 +112,16 @@ DECLARE
       }
     ],
     "where": {
+      "operator": "OR",
       "conditions": [
         {
           "column": "o.total_amount",
           "operator": ">",
+          "value": "1000",
+        },
+        {
+          "column": "o.total_amount",
+          "operator": "<",
           "value": "500",
           "value_type": "NUMBER"
         }
@@ -515,3 +524,5 @@ BEGIN
   CLOSE v_cursor;
 END;
 /
+
+

@@ -1,26 +1,24 @@
 CREATE OR REPLACE PACKAGE SQL_GENERATOR_PKG AUTHID CURRENT_USER AS
-  -- Main function to handle JSON input and return cursor with query results
   FUNCTION json_select_handler(p_json CLOB) RETURN SYS_REFCURSOR;
   
-  -- Helper function to process subqueries
   FUNCTION process_subquery(p_subquery CLOB) RETURN VARCHAR2;
   
-  -- Helper function to handle data type conversions
+
   FUNCTION format_value(p_value VARCHAR2, p_data_type VARCHAR2 DEFAULT NULL) RETURN VARCHAR2;
   
-  -- Helper function to process a single query part (for main queries and UNION parts)
+ 
   FUNCTION process_query_part(p_query_part CLOB) RETURN VARCHAR2;
   
-  -- Functions for DML operations
+
   FUNCTION json_insert_handler(p_json CLOB) RETURN NUMBER;
   FUNCTION json_update_handler(p_json CLOB) RETURN NUMBER;
   FUNCTION json_delete_handler(p_json CLOB) RETURN NUMBER;
   
-  -- Functions for DDL operations
+
   FUNCTION json_create_table_handler(p_json CLOB) RETURN NUMBER;
   FUNCTION json_drop_table_handler(p_json CLOB) RETURN NUMBER;
   
-  -- Main entry point for any SQL operation (DQL or DML)
+
   FUNCTION execute_sql(p_json CLOB) RETURN SYS_REFCURSOR;
   PROCEDURE execute_dml(p_json CLOB, p_rows_affected OUT NUMBER);
   PROCEDURE execute_ddl(p_json CLOB, p_result OUT NUMBER);
