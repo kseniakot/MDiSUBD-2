@@ -15,7 +15,7 @@ select * from orders_history;
 
 
 
--- Example data and usage
+-- Example 
 INSERT INTO customers (customer_id, customer_name) VALUES (3, 'John Doe');
 INSERT INTO customers (customer_id, customer_name) VALUES (4, 'Jane Smith');
 
@@ -25,7 +25,7 @@ INSERT INTO products (product_id, product_name, price) VALUES (4, 'Smartphone', 
 INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (3, 1, 1, 3);
 INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (4, 2, 2, 2);
 
--- Save current timestamp for future reference
+-- current timestamp
 DECLARE
   current_time TIMESTAMP;
 BEGIN
@@ -62,10 +62,10 @@ ON DELETE CASCADE;
 
 -- tests
 
-EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-21 15:29:24.366', 'YYYY-MM-DD HH24:MI:SS.FF3'));
+EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-21 16:12:23.502', 'YYYY-MM-DD HH24:MI:SS.FF3'));
 
--- Rollback by milliseconds (e.g., 60000 ms = 1 minute ago):
-EXEC history_mgmt.rollback_to(1204560);
+
+EXEC history_mgmt.rollback_to(600000);
 
 -- Show changes after a specific timestamp:
 EXEC history_mgmt.show_changes_after(TO_TIMESTAMP('2025-04-20 17:25:54.319', 'YYYY-MM-DD HH24:MI:SS.FF3'));

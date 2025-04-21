@@ -241,6 +241,18 @@ BEGIN
 END;
 /
 
+ALTER TABLE orders DROP CONSTRAINT fk_order_customer;
+ALTER TABLE orders ADD CONSTRAINT fk_order_customer
+FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+ON DELETE CASCADE;
+
+
+ALTER TABLE orders DROP CONSTRAINT fk_order_product;
+ALTER TABLE orders ADD CONSTRAINT fk_order_product
+FOREIGN KEY (product_id) REFERENCES products(product_id)
+ON DELETE CASCADE;
+
+
 
 CREATE OR REPLACE PACKAGE history_mgmt AS
   
@@ -870,19 +882,18 @@ BEGIN
 END generate_changes_report;
 /
 
--- Reset the report tracking to capture all changes since the beginning
+-- reset the report tracking to capture all changes since the beginning
 UPDATE report_tracking 
 SET last_report_time = TO_TIMESTAMP('2000-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS');
 COMMIT;
 
--- Insert some test data to verify tracking
 INSERT INTO customers (customer_id, customer_name) VALUES (101, 'Test Customer');
 INSERT INTO products (product_id, product_name, price) VALUES (101, 'Test Product', 99.99);
 INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (101, 101, 101, 5);
 
 COMMIT;
 
--- To generate a simple report since the last report:
+
 EXEC generate_changes_report(p_file_path => 'changes_report.html', p_include_details => TRUE);
 
 -- Clean up test data
@@ -892,12 +903,13 @@ DELETE FROM customers WHERE customer_id = 101;
 COMMIT;
 
 -- Generate another report to see the delete operations
-EXEC generate_changes_report(p_since_timestamp => TO_TIMESTAMP('2025-04-21 15:29:21.440', 'YYYY-MM-DD HH24:MI:SS.FF3'), p_file_path => 'changes_report2.html', p_include_details => TRUE);
+EXEC generate_changes_report(p_since_timestamp => TO_TIMESTAMP('2025-04-21 15:00:00.450', 'YYYY-MM-DD HH24:MI:SS.FF3'), p_file_path => 'changes_report2.html', p_include_details => TRUE);
 
 
-INSERT INTO customers (customer_id, customer_name) VALUES (101, 'Test Customer');
-INSERT INTO products (product_id, product_name, price) VALUES (101, 'Test Product', 99.99);
-INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (101, 101, 101, 5);
+
+INSERT INTO customers (customer_id, customer_name) VALUES (103, 'Test Customer');
+INSERT INTO products (product_id, product_name, price) VALUES (102, 'Test Product', 99.99);
+INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (102, 102, 102, 5);
 COMMIT;
 
 UPDATE customers SET customer_name = 'SSS' WHERE customer_id = 101;
