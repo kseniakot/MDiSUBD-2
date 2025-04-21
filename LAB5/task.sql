@@ -532,4 +532,372 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
 END history_mgmt;
 /
 
+---------------------------
+--Report generation
+--------------------------
+
+-- Create a table to track report generation times
+BEGIN
+  EXECUTE IMMEDIATE 'DROP TABLE report_tracking';
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END;
+/
+
+CREATE TABLE report_tracking (
+  last_report_time TIMESTAMP,
+  report_count NUMBER DEFAULT 0
+);
+
+-- Insert initial record
+INSERT INTO report_tracking (last_report_time, report_count) 
+VALUES (SYSTIMESTAMP, 0);
+
+COMMIT;
+/
+
+-- Create or replace the directory object with proper path format
+BEGIN
+  EXECUTE IMMEDIATE 'DROP DIRECTORY MY_DIR';
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END;
+/
+
+-- Note: Use forward slashes even on Windows for Oracle
+CREATE OR REPLACE DIRECTORY MY_DIR AS '/opt/oracle/reports';
+
+-- Create a procedure to generate HTML reports of database changes
+CREATE OR REPLACE PROCEDURE generate_changes_report(
+  p_since_timestamp IN TIMESTAMP DEFAULT NULL,
+  p_file_path IN VARCHAR2,
+  p_include_details IN BOOLEAN DEFAULT FALSE
+) AS
+  v_file UTL_FILE.FILE_TYPE;
+  v_start_time TIMESTAMP;
+  v_end_time TIMESTAMP := SYSTIMESTAMP;
+  v_report_num NUMBER;
+  v_filename VARCHAR2(255);
+  
+  -- Operation counts for each table
+  v_cust_inserts NUMBER := 0;
+  v_cust_updates NUMBER := 0;
+  v_cust_deletes NUMBER := 0;
+  v_prod_inserts NUMBER := 0;
+  v_prod_updates NUMBER := 0;
+  v_prod_deletes NUMBER := 0;
+  v_order_inserts NUMBER := 0;
+  v_order_updates NUMBER := 0;
+  v_order_deletes NUMBER := 0;
+  
+  -- Helper function to write HTML content safely
+  PROCEDURE write_html(p_content IN VARCHAR2) IS
+  BEGIN
+    UTL_FILE.PUT_LINE(v_file, p_content);
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Error writing to file: ' || SQLERRM);
+      RAISE;
+  END write_html;
+  
+BEGIN
+  -- Determine the starting timestamp
+  IF p_since_timestamp IS NULL THEN
+    SELECT last_report_time, report_count+1
+    INTO v_start_time, v_report_num
+    FROM report_tracking;
+  ELSE
+    v_start_time := p_since_timestamp;
+    
+    SELECT report_count+1
+    INTO v_report_num
+    FROM report_tracking;
+  END IF;
+  
+  -- Count operations for customers table
+  SELECT 
+    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+  INTO v_cust_inserts, v_cust_updates, v_cust_deletes
+  FROM customers_history
+  WHERE change_time BETWEEN v_start_time AND v_end_time;
+  
+  -- Count operations for products table
+  SELECT 
+    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+  INTO v_prod_inserts, v_prod_updates, v_prod_deletes
+  FROM products_history
+  WHERE change_time BETWEEN v_start_time AND v_end_time;
+  
+  -- Count operations for orders table
+  SELECT 
+    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+  INTO v_order_inserts, v_order_updates, v_order_deletes
+  FROM orders_history
+  WHERE change_time BETWEEN v_start_time AND v_end_time;
+  
+  -- Use the provided filename directly (no path extraction needed with Oracle directory objects)
+  v_filename := p_file_path;
+  
+  -- Generate HTML report
+  BEGIN
+    -- Open file for writing
+    BEGIN
+      DBMS_OUTPUT.PUT_LINE('Attempting to open file: ' || v_filename || ' in directory MY_DIR');
+      v_file := UTL_FILE.FOPEN('MY_DIR', v_filename, 'W', 32767);
+    EXCEPTION
+      WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error opening file: ' || SQLERRM || ' - ' || SQLCODE);
+        RAISE;
+    END;
+    
+    -- HTML Header
+    write_html('<!DOCTYPE html>');
+    write_html('<html lang="en">');
+    write_html('<head>');
+    write_html('  <meta charset="UTF-8">');
+    write_html('  <title>Database Changes Report #' || v_report_num || '</title>');
+    write_html('  <style>');
+    write_html('    body { font-family: Arial, sans-serif; margin: 20px; }');
+    write_html('    table { border-collapse: collapse; width: 100%; }');
+    write_html('    th, td { border: 1px solid #ddd; padding: 8px; }');
+    write_html('    th { background-color: #f2f2f2; }');
+    write_html('    .insert { color: green; }');
+    write_html('    .update { color: blue; }');
+    write_html('    .delete { color: red; }');
+    write_html('  </style>');
+    write_html('</head>');
+    write_html('<body>');
+    
+    -- Report header
+    write_html('  <h1>Database Changes Report #' || v_report_num || '</h1>');
+    write_html('  <p>');
+    write_html('    Report generated: ' || TO_CHAR(v_end_time, 'YYYY-MM-DD HH24:MI:SS') || '<br>');
+    write_html('    Period covered: ' || TO_CHAR(v_start_time, 'YYYY-MM-DD HH24:MI:SS') || 
+               ' to ' || TO_CHAR(v_end_time, 'YYYY-MM-DD HH24:MI:SS'));
+    write_html('  </p>');
+    
+    -- Summary section
+    write_html('  <h2>Summary of Changes</h2>');
+    write_html('  <table>');
+    write_html('    <tr>');
+    write_html('      <th>Table</th>');
+    write_html('      <th>Inserts</th>');
+    write_html('      <th>Updates</th>');
+    write_html('      <th>Deletes</th>');
+    write_html('      <th>Total</th>');
+    write_html('    </tr>');
+    
+    -- Customers summary
+    write_html('    <tr>');
+    write_html('      <td>Customers</td>');
+    write_html('      <td class="insert">' || v_cust_inserts || '</td>');
+    write_html('      <td class="update">' || v_cust_updates || '</td>');
+    write_html('      <td class="delete">' || v_cust_deletes || '</td>');
+    write_html('      <td>' || (v_cust_inserts + v_cust_updates + v_cust_deletes) || '</td>');
+    write_html('    </tr>');
+    
+    -- Products summary
+    write_html('    <tr>');
+    write_html('      <td>Products</td>');
+    write_html('      <td class="insert">' || v_prod_inserts || '</td>');
+    write_html('      <td class="update">' || v_prod_updates || '</td>');
+    write_html('      <td class="delete">' || v_prod_deletes || '</td>');
+    write_html('      <td>' || (v_prod_inserts + v_prod_updates + v_prod_deletes) || '</td>');
+    write_html('    </tr>');
+    
+    -- Orders summary
+    write_html('    <tr>');
+    write_html('      <td>Orders</td>');
+    write_html('      <td class="insert">' || v_order_inserts || '</td>');
+    write_html('      <td class="update">' || v_order_updates || '</td>');
+    write_html('      <td class="delete">' || v_order_deletes || '</td>');
+    write_html('      <td>' || (v_order_inserts + v_order_updates + v_order_deletes) || '</td>');
+    write_html('    </tr>');
+    
+    -- Total row
+    write_html('    <tr>');
+    write_html('      <td><strong>Total</strong></td>');
+    write_html('      <td class="insert"><strong>' || (v_cust_inserts + v_prod_inserts + v_order_inserts) || '</strong></td>');
+    write_html('      <td class="update"><strong>' || (v_cust_updates + v_prod_updates + v_order_updates) || '</strong></td>');
+    write_html('      <td class="delete"><strong>' || (v_cust_deletes + v_prod_deletes + v_order_deletes) || '</strong></td>');
+    write_html('      <td><strong>' || 
+              (v_cust_inserts + v_cust_updates + v_cust_deletes +
+               v_prod_inserts + v_prod_updates + v_prod_deletes +
+               v_order_inserts + v_order_updates + v_order_deletes) || '</strong></td>');
+    write_html('    </tr>');
+    write_html('  </table>');
+    
+    -- Detailed changes if requested
+    IF p_include_details THEN
+      -- Customer details
+      IF (v_cust_inserts + v_cust_updates + v_cust_deletes) > 0 THEN
+        write_html('  <h2>Customer Changes</h2>');
+        write_html('  <table>');
+        write_html('    <tr>');
+        write_html('      <th>Time</th>');
+        write_html('      <th>Operation</th>');
+        write_html('      <th>ID</th>');
+        write_html('      <th>Name</th>');
+        write_html('      <th>Old Name</th>');
+        write_html('    </tr>');
+        
+        FOR c IN (
+          SELECT operation_type, change_time, customer_id, customer_name, old_name
+          FROM customers_history
+          WHERE change_time BETWEEN v_start_time AND v_end_time
+          ORDER BY change_time
+        ) LOOP
+          write_html('    <tr>');
+          write_html('      <td>' || TO_CHAR(c.change_time, 'YYYY-MM-DD HH24:MI:SS') || '</td>');
+          write_html('      <td class="' || LOWER(c.operation_type) || '">' || c.operation_type || '</td>');
+          write_html('      <td>' || c.customer_id || '</td>');
+          write_html('      <td>' || COALESCE(c.customer_name, 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(c.old_name, 'NULL') || '</td>');
+          write_html('    </tr>');
+        END LOOP;
+        
+        write_html('  </table>');
+      END IF;
+      
+      -- Product details
+      IF (v_prod_inserts + v_prod_updates + v_prod_deletes) > 0 THEN
+        write_html('  <h2>Product Changes</h2>');
+        write_html('  <table>');
+        write_html('    <tr>');
+        write_html('      <th>Time</th>');
+        write_html('      <th>Operation</th>');
+        write_html('      <th>ID</th>');
+        write_html('      <th>Name</th>');
+        write_html('      <th>Old Name</th>');
+        write_html('      <th>Price</th>');
+        write_html('      <th>Old Price</th>');
+        write_html('    </tr>');
+        
+        FOR p IN (
+          SELECT operation_type, change_time, product_id, product_name, old_name, price, old_price
+          FROM products_history
+          WHERE change_time BETWEEN v_start_time AND v_end_time
+          ORDER BY change_time
+        ) LOOP
+          write_html('    <tr>');
+          write_html('      <td>' || TO_CHAR(p.change_time, 'YYYY-MM-DD HH24:MI:SS') || '</td>');
+          write_html('      <td class="' || LOWER(p.operation_type) || '">' || p.operation_type || '</td>');
+          write_html('      <td>' || p.product_id || '</td>');
+          write_html('      <td>' || COALESCE(p.product_name, 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(p.old_name, 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(p.price), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(p.old_price), 'NULL') || '</td>');
+          write_html('    </tr>');
+        END LOOP;
+        
+        write_html('  </table>');
+      END IF;
+      
+      -- Order details
+      IF (v_order_inserts + v_order_updates + v_order_deletes) > 0 THEN
+        write_html('  <h2>Order Changes</h2>');
+        write_html('  <table>');
+        write_html('    <tr>');
+        write_html('      <th>Time</th>');
+        write_html('      <th>Operation</th>');
+        write_html('      <th>Order ID</th>');
+        write_html('      <th>Customer</th>');
+        write_html('      <th>Old Customer</th>');
+        write_html('      <th>Product</th>');
+        write_html('      <th>Old Product</th>');
+        write_html('      <th>Qty</th>');
+        write_html('      <th>Old Qty</th>');
+        write_html('    </tr>');
+        
+        FOR o IN (
+          SELECT operation_type, change_time, order_id, 
+                 customer_id, old_customer_id, 
+                 product_id, old_product_id,
+                 quantity, old_quantity
+          FROM orders_history
+          WHERE change_time BETWEEN v_start_time AND v_end_time
+          ORDER BY change_time
+        ) LOOP
+          write_html('    <tr>');
+          write_html('      <td>' || TO_CHAR(o.change_time, 'YYYY-MM-DD HH24:MI:SS') || '</td>');
+          write_html('      <td class="' || LOWER(o.operation_type) || '">' || o.operation_type || '</td>');
+          write_html('      <td>' || o.order_id || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.customer_id), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.old_customer_id), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.product_id), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.old_product_id), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.quantity), 'NULL') || '</td>');
+          write_html('      <td>' || COALESCE(TO_CHAR(o.old_quantity), 'NULL') || '</td>');
+          write_html('    </tr>');
+        END LOOP;
+        
+        write_html('  </table>');
+      END IF;
+    END IF;
+    
+    -- HTML Footer
+    write_html('</body>');
+    write_html('</html>');
+    
+    -- Close the file
+    UTL_FILE.FCLOSE(v_file);
+    
+    -- Update the last report time
+    UPDATE report_tracking
+    SET last_report_time = v_end_time,
+        report_count = v_report_num;
+    
+    COMMIT;
+    
+    DBMS_OUTPUT.PUT_LINE('Report #' || v_report_num || ' generated successfully at: ' || p_file_path);
+    
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF UTL_FILE.IS_OPEN(v_file) THEN
+        UTL_FILE.FCLOSE(v_file);
+      END IF;
+      DBMS_OUTPUT.PUT_LINE('Error generating report: ' || SQLERRM);
+      RAISE;
+  END;
+END generate_changes_report;
+/
+
+-- Reset the report tracking to capture all changes since the beginning
+UPDATE report_tracking 
+SET last_report_time = TO_TIMESTAMP('2000-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS');
+COMMIT;
+
+-- Insert some test data to verify tracking
+INSERT INTO customers (customer_id, customer_name) VALUES (101, 'Test Customer');
+INSERT INTO products (product_id, product_name, price) VALUES (101, 'Test Product', 99.99);
+INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (101, 101, 101, 5);
+
+COMMIT;
+
+-- To generate a simple report since the last report:
+EXEC generate_changes_report(p_file_path => 'changes_report.html', p_include_details => TRUE);
+
+-- Clean up test data
+DELETE FROM orders WHERE order_id = 101;
+DELETE FROM products WHERE product_id = 101;
+DELETE FROM customers WHERE customer_id = 101;
+COMMIT;
+
+-- Generate another report to see the delete operations
+EXEC generate_changes_report(p_file_path => 'changes_report2.html', p_include_details => TRUE);
+
+
+
+
+
+
+
+
+
 
