@@ -262,228 +262,164 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
     EXECUTE IMMEDIATE 'ALTER TRIGGER orders_audit_trg DISABLE';
     
     BEGIN
-      -- First, identify all customers and products referenced in orders that need to be restored
-      -- need to ensure they exist before restoring the orders
-      DECLARE
-        -- Tables to store IDs of entities that need to be restored
-        TYPE t_id_array IS TABLE OF NUMBER INDEX BY PLS_INTEGER; -- similar to dct in python
-        v_required_customers t_id_array;
-        v_required_products t_id_array;
-        v_customer_count PLS_INTEGER := 0;
-        v_product_count PLS_INTEGER := 0;
-        
-        -- Cursor to find orders that will be restored and their references
-        CURSOR c_order_references IS
-          SELECT DISTINCT customer_id, product_id
-          FROM orders_history
-          WHERE change_time <= p_timestamp
-          AND operation_type IN ('INSERT', 'UPDATE')
-          AND customer_id IS NOT NULL
-          AND product_id IS NOT NULL;
-          
-      BEGIN
-        -- Collect all required customers and products from orders
-        FOR r_ref IN c_order_references LOOP
-          -- Check if customers exist
-          SELECT COUNT(*) INTO v_exists FROM customers WHERE customer_id = r_ref.customer_id;
-          IF v_exists = 0 THEN 
-            v_customer_count := v_customer_count + 1;
-            v_required_customers(v_customer_count) := r_ref.customer_id;
-          END IF;
-          
-          -- Check if products exist
-          SELECT COUNT(*) INTO v_exists FROM products WHERE product_id = r_ref.product_id;
-          IF v_exists = 0 THEN
-            v_product_count := v_product_count + 1;
-            v_required_products(v_product_count) := r_ref.product_id;
-          END IF;
-        END LOOP;
-        
-        DBMS_OUTPUT.PUT_LINE('Found ' || v_customer_count || ' missing customers and ' || 
-                           v_product_count || ' missing products referenced by orders');
-      
-        -- First, restore missing customers
-        IF v_customer_count > 0 THEN
-          FOR i IN 1..v_customer_count LOOP
-            DECLARE
-              v_customer_id NUMBER := v_required_customers(i);
-              v_name VARCHAR2(100);
-              v_reg_date DATE;
-              
-              -- Find the most recent state of this customer before the timestamp
-              CURSOR c_find_customer IS
-                SELECT customer_id, customer_name, registered_at, operation_type, 
-                       ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY change_time DESC) AS rn
-                FROM customers_history
-                WHERE change_time <= p_timestamp
-                AND customer_id = v_customer_id
-                AND operation_type IN ('INSERT', 'UPDATE');
-            BEGIN
-              -- Attempt to restore the customer
-              FOR r_cust IN c_find_customer LOOP
-                IF r_cust.rn = 1 THEN 
-                  DBMS_OUTPUT.PUT_LINE('Restoring referenced customer ID: ' || v_customer_id);
-                  
-                  INSERT INTO customers (customer_id, customer_name, registered_at)
-                  VALUES (r_cust.customer_id, r_cust.customer_name, r_cust.registered_at);
-                  
-                  EXIT; -- We found and restored the customer
-                END IF;
-              END LOOP;
-            END;
-          END LOOP;
-        END IF;
-        
-        -- Next, restore missing products
-        IF v_product_count > 0 THEN
-          FOR i IN 1..v_product_count LOOP
-            DECLARE
-              v_product_id NUMBER := v_required_products(i);
-              
-              -- Find the most recent state of this product before the timestamp
-              CURSOR c_find_product IS
-                SELECT product_id, product_name, price, operation_type, 
-                       ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY change_time DESC) AS rn
-                FROM products_history
-                WHERE change_time <= p_timestamp
-                AND product_id = v_product_id
-                AND operation_type IN ('INSERT', 'UPDATE');
-            BEGIN
-              -- Attempt to restore the product
-              FOR r_prod IN c_find_product LOOP
-                IF r_prod.rn = 1 THEN 
-                  DBMS_OUTPUT.PUT_LINE('Restoring referenced product ID: ' || v_product_id);
-                  
-                  INSERT INTO products (product_id, product_name, price)
-                  VALUES (r_prod.product_id, r_prod.product_name, r_prod.price);
-                  
-                  EXIT; -- We found and restored the product
-                END IF;
-              END LOOP;
-            END;
-          END LOOP;
-        END IF;
-      END;
+      -- Process changes in reverse chronological order (newest to oldest)
+      -- This ensures we undo operations in the correct sequence
 
-      -- Now proceed with regular rollback of customers
-      DECLARE
-        CURSOR c_customers IS
-          SELECT customer_id, customer_name, registered_at, operation_type, 
-                 ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY change_time DESC) AS rn
-          FROM customers_history
-          WHERE change_time <= p_timestamp;
-      BEGIN
-        FOR r_cust IN c_customers LOOP
-          IF r_cust.rn = 1 THEN  -- Get the latest state before the timestamp
-            -- Check if the customer exists
-            SELECT COUNT(*) INTO v_exists FROM customers WHERE customer_id = r_cust.customer_id;
-            
-            IF r_cust.operation_type = 'DELETE' THEN
+      -- Finally handle customers
+      FOR r_cust IN (
+        SELECT customer_id, customer_name, registered_at, old_name, old_reg_date, operation_type, change_time
+        FROM customers_history
+        WHERE change_time > p_timestamp
+        ORDER BY change_time DESC
+      ) LOOP
+        -- Undo the operation that was done
+        CASE r_cust.operation_type
+          WHEN 'INSERT' THEN
+            -- If it was an insert after our timestamp, we need to delete it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM customers WHERE customer_id = r_cust.customer_id;
               IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing INSERT: Deleting customer ' || r_cust.customer_id);
                 DELETE FROM customers WHERE customer_id = r_cust.customer_id;
               END IF;
-            ELSIF r_cust.operation_type IN ('INSERT', 'UPDATE') THEN
-              IF v_exists > 0 THEN
-                UPDATE customers
-                SET customer_name = r_cust.customer_name,
-                    registered_at = r_cust.registered_at
-                WHERE customer_id = r_cust.customer_id;
-              ELSE
-                INSERT INTO customers (customer_id, customer_name, registered_at)
-                VALUES (r_cust.customer_id, r_cust.customer_name, r_cust.registered_at);
-              END IF;
-            END IF;
-          END IF;
-        END LOOP;
-      END;
-
-      -- Rollback products
-      DECLARE
-        CURSOR c_products IS
-          SELECT product_id, product_name, price, operation_type, 
-                 ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY change_time DESC) AS rn
-          FROM products_history
-          WHERE change_time <= p_timestamp;
-      BEGIN
-        FOR r_prod IN c_products LOOP
-          IF r_prod.rn = 1 THEN
-            SELECT COUNT(*) INTO v_exists FROM products WHERE product_id = r_prod.product_id;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing customer insert: ' || SQLERRM);
+            END;
             
-            IF r_prod.operation_type = 'DELETE' THEN
+          WHEN 'UPDATE' THEN
+            -- If it was updated after our timestamp, restore the previous values
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM customers WHERE customer_id = r_cust.customer_id;
               IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing UPDATE: Restoring customer ' || r_cust.customer_id || ' to previous state');
+                UPDATE customers
+                SET customer_name = r_cust.old_name,
+                    registered_at = r_cust.old_reg_date
+                WHERE customer_id = r_cust.customer_id;
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing customer update: ' || SQLERRM);
+            END;
+            
+          WHEN 'DELETE' THEN
+            -- If it was deleted after our timestamp, restore it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM customers WHERE customer_id = r_cust.customer_id;
+              IF v_exists = 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing DELETE: Restoring customer ' || r_cust.customer_id);
+                INSERT INTO customers (customer_id, customer_name, registered_at)
+                VALUES (r_cust.customer_id, r_cust.old_name, r_cust.old_reg_date);
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing customer delete: ' || SQLERRM);
+            END;
+        END CASE;
+      END LOOP;
+
+      -- Next handle products
+      FOR r_prod IN (
+        SELECT product_id, product_name, price, old_name, old_price, operation_type, change_time
+        FROM products_history
+        WHERE change_time > p_timestamp
+        ORDER BY change_time DESC
+      ) LOOP
+        -- Undo the operation that was done
+        CASE r_prod.operation_type
+          WHEN 'INSERT' THEN
+            -- If it was an insert after our timestamp, we need to delete it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM products WHERE product_id = r_prod.product_id;
+              IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing INSERT: Deleting product ' || r_prod.product_id);
                 DELETE FROM products WHERE product_id = r_prod.product_id;
               END IF;
-            ELSIF r_prod.operation_type IN ('INSERT', 'UPDATE') THEN
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing product insert: ' || SQLERRM);
+            END;
+            
+          WHEN 'UPDATE' THEN
+            -- If it was updated after our timestamp, restore the previous values
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM products WHERE product_id = r_prod.product_id;
               IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing UPDATE: Restoring product ' || r_prod.product_id || ' to previous state');
                 UPDATE products
-                SET product_name = r_prod.product_name,
-                    price = r_prod.price
+                SET product_name = r_prod.old_name,
+                    price = r_prod.old_price
                 WHERE product_id = r_prod.product_id;
-              ELSE
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing product update: ' || SQLERRM);
+            END;
+            
+          WHEN 'DELETE' THEN
+            -- If it was deleted after our timestamp, restore it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM products WHERE product_id = r_prod.product_id;
+              IF v_exists = 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing DELETE: Restoring product ' || r_prod.product_id);
                 INSERT INTO products (product_id, product_name, price)
                 VALUES (r_prod.product_id, r_prod.product_name, r_prod.price);
               END IF;
-            END IF;
-          END IF;
-        END LOOP;
-      END;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing product delete: ' || SQLERRM);
+            END;
+        END CASE;
+      END LOOP;
 
-      -- Finally rollback orders
-      DECLARE
-        CURSOR c_orders IS
-          SELECT order_id, customer_id, product_id, order_date, quantity, operation_type, 
-                 ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY change_time DESC) AS rn
-          FROM orders_history
-          WHERE change_time <= p_timestamp;
-      BEGIN
-        FOR r_ord IN c_orders LOOP
-          IF r_ord.rn = 1 THEN
-            SELECT COUNT(*) INTO v_exists FROM orders WHERE order_id = r_ord.order_id;
-            
-            IF r_ord.operation_type = 'DELETE' THEN
+      -- First handle orders (they depend on customers and products)
+      FOR r_ord IN (
+        SELECT order_id, customer_id, product_id, order_date, quantity, operation_type, change_time, old_quantity, old_order_date, old_product_id, old_customer_id
+        FROM orders_history
+        WHERE change_time > p_timestamp
+        ORDER BY change_time DESC
+      ) LOOP
+        -- Undo the operation that was done
+        CASE r_ord.operation_type
+          WHEN 'INSERT' THEN
+            -- If it was an insert after our timestamp, we need to delete it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM orders WHERE order_id = r_ord.order_id;
               IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing INSERT: Deleting order ' || r_ord.order_id);
                 DELETE FROM orders WHERE order_id = r_ord.order_id;
               END IF;
-            ELSIF r_ord.operation_type IN ('INSERT', 'UPDATE') THEN
-              -- Check that referenced entities exist
-              DECLARE
-                v_customer_exists NUMBER := 0;
-                v_product_exists NUMBER := 0;
-              BEGIN
-                IF r_ord.customer_id IS NOT NULL THEN
-                  SELECT COUNT(*) INTO v_customer_exists FROM customers WHERE customer_id = r_ord.customer_id;
-                ELSE
-                  v_customer_exists := 1; -- NULL customer_id is allowed
-                END IF;
-                
-                IF r_ord.product_id IS NOT NULL THEN
-                  SELECT COUNT(*) INTO v_product_exists FROM products WHERE product_id = r_ord.product_id;
-                ELSE
-                  v_product_exists := 1; -- NULL product_id is allowed
-                END IF;
-                
-                -- Only restore order if referenced entities exist
-                IF v_customer_exists > 0 AND v_product_exists > 0 THEN
-                  IF v_exists > 0 THEN
-                    UPDATE orders
-                    SET customer_id = r_ord.customer_id,
-                        product_id = r_ord.product_id,
-                        order_date = r_ord.order_date,
-                        quantity = r_ord.quantity
-                    WHERE order_id = r_ord.order_id;
-                  ELSE
-                    INSERT INTO orders (order_id, customer_id, product_id, order_date, quantity)
-                    VALUES (r_ord.order_id, r_ord.customer_id, r_ord.product_id, r_ord.order_date, r_ord.quantity);
-                  END IF;
-                ELSE
-                  DBMS_OUTPUT.PUT_LINE('Warning: Cannot restore order ID ' || r_ord.order_id || 
-                                       ' - Missing referenced customer or product');
-                END IF;
-              END;
-            END IF;
-          END IF;
-        END LOOP;
-      END;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing order insert: ' || SQLERRM);
+            END;
+            
+          WHEN 'UPDATE' THEN
+            -- If it was updated after our timestamp, restore the previous values
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM orders WHERE order_id = r_ord.order_id;
+              IF v_exists > 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing UPDATE: Restoring order ' || r_ord.order_id || ' to previous state');
+                UPDATE orders
+                SET customer_id = r_ord.old_customer_id,
+                    product_id = r_ord.old_product_id,
+                    order_date = r_ord.old_order_date,
+                    quantity = r_ord.old_quantity
+                WHERE order_id = r_ord.order_id;
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing order update: ' || SQLERRM);
+            END;
+            
+          WHEN 'DELETE' THEN
+            -- If it was deleted after our timestamp, restore it
+            BEGIN
+              SELECT COUNT(*) INTO v_exists FROM orders WHERE order_id = r_ord.order_id;
+              IF v_exists = 0 THEN
+                DBMS_OUTPUT.PUT_LINE('Undoing DELETE: Restoring order ' || r_ord.order_id);
+                INSERT INTO orders (order_id, customer_id, product_id, order_date, quantity)
+                VALUES (r_ord.order_id, r_ord.old_customer_id, r_ord.old_product_id, r_ord.old_order_date, r_ord.old_quantity);
+              END IF;
+            EXCEPTION WHEN OTHERS THEN
+              DBMS_OUTPUT.PUT_LINE('Error undoing order delete: ' || SQLERRM);
+            END;
+        END CASE;
+      END LOOP;
+
 
       -- Re-enable triggers
       EXECUTE IMMEDIATE 'ALTER TRIGGER customers_audit_trg ENABLE';

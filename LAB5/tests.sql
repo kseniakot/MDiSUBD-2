@@ -33,7 +33,7 @@ END;
 /
 
 -- Make some changes
-UPDATE customers SET customer_name = 'Daniel' WHERE customer_id = 4;
+UPDATE customers SET customer_name = 'Daniel' WHERE customer_id = 1;
 DELETE FROM orders WHERE order_id = 2;
 INSERT INTO products (product_id, product_name, price) VALUES (3, 'Tablet', 500.00);
 
@@ -54,7 +54,7 @@ ON DELETE CASCADE;
 
 -- tests
 
-EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-20 17:25:54.319', 'YYYY-MM-DD HH24:MI:SS.FF3'));
+EXEC history_mgmt.rollback_to(TO_TIMESTAMP(' 2025-04-21 13:40:23.575', 'YYYY-MM-DD HH24:MI:SS.FF3'));
 
 -- Rollback by milliseconds (e.g., 60000 ms = 1 minute ago):
 EXEC history_mgmt.rollback_to(1204560);
