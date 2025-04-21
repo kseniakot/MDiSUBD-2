@@ -7,6 +7,9 @@ insert into products (product_id, product_name, price) values (2, 'Smartphone', 
 insert into orders (order_id, customer_id, product_id, quantity) values (1, 1, 1, 1);
 insert into orders (order_id, customer_id, product_id, quantity) values (2, 2, 2, 2);
 
+update customers set customer_name = 'John Gull' where customer_id = 1;
+delete from customers where customer_id = 2;
+
 delete from orders where order_id = 2;
 select * from orders_history;
 
@@ -34,7 +37,7 @@ END;
 
 -- Make some changes
 UPDATE customers SET customer_name = 'Daniel' WHERE customer_id = 1;
-DELETE FROM orders WHERE order_id = 2;
+DELETE FROM orders WHERE order_id = 1;
 INSERT INTO products (product_id, product_name, price) VALUES (3, 'Tablet', 500.00);
 
 
@@ -52,9 +55,14 @@ FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
 ON DELETE CASCADE;
 
 
+ALTER TABLE orders DROP CONSTRAINT fk_order_product;
+ALTER TABLE orders ADD CONSTRAINT fk_order_product
+FOREIGN KEY (product_id) REFERENCES products(product_id)
+ON DELETE CASCADE;
+
 -- tests
 
-EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-21 15:06:27.300', 'YYYY-MM-DD HH24:MI:SS.FF3'));
+EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-21 15:29:24.366', 'YYYY-MM-DD HH24:MI:SS.FF3'));
 
 -- Rollback by milliseconds (e.g., 60000 ms = 1 minute ago):
 EXEC history_mgmt.rollback_to(1204560);

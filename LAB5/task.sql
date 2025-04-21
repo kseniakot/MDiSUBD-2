@@ -892,8 +892,23 @@ DELETE FROM customers WHERE customer_id = 101;
 COMMIT;
 
 -- Generate another report to see the delete operations
-EXEC generate_changes_report(p_file_path => 'changes_report2.html', p_include_details => TRUE);
+EXEC generate_changes_report(p_since_timestamp => TO_TIMESTAMP('2025-04-21 15:29:21.440', 'YYYY-MM-DD HH24:MI:SS.FF3'), p_file_path => 'changes_report2.html', p_include_details => TRUE);
 
+
+INSERT INTO customers (customer_id, customer_name) VALUES (101, 'Test Customer');
+INSERT INTO products (product_id, product_name, price) VALUES (101, 'Test Product', 99.99);
+INSERT INTO orders (order_id, customer_id, product_id, quantity) VALUES (101, 101, 101, 5);
+COMMIT;
+
+UPDATE customers SET customer_name = 'SSS' WHERE customer_id = 101;
+UPDATE products SET product_name = 'SSS' WHERE product_id = 101;
+UPDATE orders SET quantity = 100 WHERE order_id = 101;
+COMMIT;
+
+DELETE FROM orders WHERE order_id = 101;
+DELETE FROM products WHERE product_id = 101;
+DELETE FROM customers WHERE customer_id = 101;
+COMMIT;
 
 
 
