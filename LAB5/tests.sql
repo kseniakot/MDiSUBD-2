@@ -54,7 +54,7 @@ ON DELETE CASCADE;
 
 -- tests
 
-EXEC history_mgmt.rollback_to(TO_TIMESTAMP(' 2025-04-21 13:40:23.575', 'YYYY-MM-DD HH24:MI:SS.FF3'));
+EXEC history_mgmt.rollback_to(TO_TIMESTAMP('2025-04-21 15:06:27.300', 'YYYY-MM-DD HH24:MI:SS.FF3'));
 
 -- Rollback by milliseconds (e.g., 60000 ms = 1 minute ago):
 EXEC history_mgmt.rollback_to(1204560);
@@ -76,3 +76,5 @@ BEGIN
   
   DBMS_OUTPUT.PUT_LINE('Разница в миллисекундах: ' || ROUND(v_ms, 3));
 END;
+
+EXEC generate_changes_report(p_file_path => 'changes_report2.html', p_include_details => TRUE);

@@ -54,7 +54,8 @@ CREATE TABLE customers_history (
   customer_name   VARCHAR2(100),
   old_name        VARCHAR2(100),  
   registered_at   DATE,
-  old_reg_date    DATE           
+  old_reg_date    DATE,
+  rolled_back     NUMBER(1)      DEFAULT 0  -- Flag to indicate if operation was rolled back
 );
 
 CREATE TABLE products_history (
@@ -65,7 +66,8 @@ CREATE TABLE products_history (
   product_name    VARCHAR2(100),
   old_name        VARCHAR2(100),  
   price           NUMBER(10, 2),
-  old_price       NUMBER(10, 2)   
+  old_price       NUMBER(10, 2),
+  rolled_back     NUMBER(1)      DEFAULT 0  -- Flag to indicate if operation was rolled back
 );
 
 CREATE TABLE orders_history (
@@ -80,7 +82,8 @@ CREATE TABLE orders_history (
   order_date      DATE,
   old_order_date  DATE,           
   quantity        NUMBER(5),
-  old_quantity    NUMBER(5)      
+  old_quantity    NUMBER(5),
+  rolled_back     NUMBER(1)      DEFAULT 0  -- Flag to indicate if operation was rolled back
 );
 
 -- Triggers to track all DML operations
@@ -265,9 +268,8 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
       -- Process changes in reverse chronological order (newest to oldest)
       -- This ensures we undo operations in the correct sequence
 
-      -- Finally handle customers
       FOR r_cust IN (
-        SELECT customer_id, customer_name, registered_at, old_name, old_reg_date, operation_type, change_time
+        SELECT history_id, customer_id, customer_name, registered_at, old_name, old_reg_date, operation_type, change_time
         FROM customers_history
         WHERE change_time > p_timestamp
         ORDER BY change_time DESC
@@ -314,11 +316,12 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
               DBMS_OUTPUT.PUT_LINE('Error undoing customer delete: ' || SQLERRM);
             END;
         END CASE;
+        UPDATE customers_history SET rolled_back = 1 WHERE history_id = r_cust.history_id;
       END LOOP;
 
       -- Next handle products
       FOR r_prod IN (
-        SELECT product_id, product_name, price, old_name, old_price, operation_type, change_time
+        SELECT history_id, product_id, product_name, price, old_name, old_price, operation_type, change_time
         FROM products_history
         WHERE change_time > p_timestamp
         ORDER BY change_time DESC
@@ -359,17 +362,18 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
               IF v_exists = 0 THEN
                 DBMS_OUTPUT.PUT_LINE('Undoing DELETE: Restoring product ' || r_prod.product_id);
                 INSERT INTO products (product_id, product_name, price)
-                VALUES (r_prod.product_id, r_prod.product_name, r_prod.price);
+                VALUES (r_prod.product_id, r_prod.old_name, r_prod.old_price);
               END IF;
             EXCEPTION WHEN OTHERS THEN
               DBMS_OUTPUT.PUT_LINE('Error undoing product delete: ' || SQLERRM);
             END;
         END CASE;
+        UPDATE products_history SET rolled_back = 1 WHERE history_id = r_prod.history_id;
       END LOOP;
 
-      -- First handle orders (they depend on customers and products)
+      -- orders (they depend on customers and products)
       FOR r_ord IN (
-        SELECT order_id, customer_id, product_id, order_date, quantity, operation_type, change_time, old_quantity, old_order_date, old_product_id, old_customer_id
+        SELECT history_id, order_id, customer_id, product_id, order_date, quantity, operation_type, change_time, old_quantity, old_order_date, old_product_id, old_customer_id
         FROM orders_history
         WHERE change_time > p_timestamp
         ORDER BY change_time DESC
@@ -418,6 +422,7 @@ CREATE OR REPLACE PACKAGE BODY history_mgmt AS
               DBMS_OUTPUT.PUT_LINE('Error undoing order delete: ' || SQLERRM);
             END;
         END CASE;
+        UPDATE orders_history SET rolled_back = 1 WHERE history_id = r_ord.history_id;
       END LOOP;
 
 
@@ -564,10 +569,8 @@ EXCEPTION
 END;
 /
 
--- Note: Use forward slashes even on Windows for Oracle
 CREATE OR REPLACE DIRECTORY MY_DIR AS '/opt/oracle/reports';
 
--- Create a procedure to generate HTML reports of database changes
 CREATE OR REPLACE PROCEDURE generate_changes_report(
   p_since_timestamp IN TIMESTAMP DEFAULT NULL,
   p_file_path IN VARCHAR2,
@@ -616,37 +619,36 @@ BEGIN
   
   -- Count operations for customers table
   SELECT 
-    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+    COUNT(CASE WHEN operation_type = 'INSERT' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' AND rolled_back = 0 THEN 1 END)
   INTO v_cust_inserts, v_cust_updates, v_cust_deletes
   FROM customers_history
   WHERE change_time BETWEEN v_start_time AND v_end_time;
   
   -- Count operations for products table
   SELECT 
-    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+    COUNT(CASE WHEN operation_type = 'INSERT' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' AND rolled_back = 0 THEN 1 END)
   INTO v_prod_inserts, v_prod_updates, v_prod_deletes
   FROM products_history
   WHERE change_time BETWEEN v_start_time AND v_end_time;
   
   -- Count operations for orders table
   SELECT 
-    COUNT(CASE WHEN operation_type = 'INSERT' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'UPDATE' THEN 1 END),
-    COUNT(CASE WHEN operation_type = 'DELETE' THEN 1 END)
+    COUNT(CASE WHEN operation_type = 'INSERT' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'UPDATE' AND rolled_back = 0 THEN 1 END),
+    COUNT(CASE WHEN operation_type = 'DELETE' AND rolled_back = 0 THEN 1 END)
   INTO v_order_inserts, v_order_updates, v_order_deletes
   FROM orders_history
   WHERE change_time BETWEEN v_start_time AND v_end_time;
   
-  -- Use the provided filename directly (no path extraction needed with Oracle directory objects)
   v_filename := p_file_path;
   
   -- Generate HTML report
   BEGIN
-    -- Open file for writing
+  
     BEGIN
       DBMS_OUTPUT.PUT_LINE('Attempting to open file: ' || v_filename || ' in directory MY_DIR');
       v_file := UTL_FILE.FOPEN('MY_DIR', v_filename, 'W', 32767);
@@ -750,7 +752,7 @@ BEGIN
         FOR c IN (
           SELECT operation_type, change_time, customer_id, customer_name, old_name
           FROM customers_history
-          WHERE change_time BETWEEN v_start_time AND v_end_time
+          WHERE change_time BETWEEN v_start_time AND v_end_time AND rolled_back = 0
           ORDER BY change_time
         ) LOOP
           write_html('    <tr>');
@@ -782,7 +784,7 @@ BEGIN
         FOR p IN (
           SELECT operation_type, change_time, product_id, product_name, old_name, price, old_price
           FROM products_history
-          WHERE change_time BETWEEN v_start_time AND v_end_time
+          WHERE change_time BETWEEN v_start_time AND v_end_time AND rolled_back = 0
           ORDER BY change_time
         ) LOOP
           write_html('    <tr>');
@@ -821,7 +823,7 @@ BEGIN
                  product_id, old_product_id,
                  quantity, old_quantity
           FROM orders_history
-          WHERE change_time BETWEEN v_start_time AND v_end_time
+          WHERE change_time BETWEEN v_start_time AND v_end_time AND rolled_back = 0
           ORDER BY change_time
         ) LOOP
           write_html('    <tr>');
@@ -891,6 +893,8 @@ COMMIT;
 
 -- Generate another report to see the delete operations
 EXEC generate_changes_report(p_file_path => 'changes_report2.html', p_include_details => TRUE);
+
+
 
 
 
